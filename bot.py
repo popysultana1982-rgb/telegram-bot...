@@ -62,6 +62,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
         self.end_headers()
 
     def log_message(self, format, *args):
@@ -134,9 +135,10 @@ def init_db():
             user_id INTEGER,
             file_id TEXT,
             emails_json TEXT,
+            in_review_json TEXT DEFAULT '[]',
             accepted_count INTEGER DEFAULT 0,
             rejected_count INTEGER DEFAULT 0,
-            status TEXT DEFAULT 'pending', -- pending -> in_review -> completed / rejected
+            status TEXT DEFAULT 'pending', -- pending -> stage2_review -> completed / rejected
             created_at TEXT
         )
     """)
@@ -158,17 +160,12 @@ DEFAULT_MESSAGES = {
         "আসসালামু আলাইকুম, {name}! 🌸\n\n"
         "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
         "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করতে পারবেন।\n\n"
-        "📌 গুরুত্বপূর্ণ নিয়মাবলি:\n"
-        "🔹 প্রতিদিন সর্বোচ্চ ৫টি Gmail Account সাবমিট করতে পারবেন।\n"
-        "🔹 প্রতিটি ভ্যালিড Gmail অ্যাকাউন্টের মূল্য ৳২৫ টাকা। 💰\n"
-        "🔹 প্রতিটি Gmail অবশ্যই Valid এবং ব্যবহারযোগ্য হতে হবে।\n"
-        "🔹 ধাপ ১: ফাইল সাবমিটের পর অ্যাডমিন সর্বোচ্চ ২৪ ঘণ্টার মধ্যে ফাইলটি প্রাথমিক রিসিভ করবেন।\n"
-        "🔹 ধাপ ২: প্রাথমিক রিসিভ করার পর পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা জিমেইলগুলো পর্যবেক্ষণ করা হবে।\n"
-        "🔹 ২৪ থেকে ৪৮ ঘণ্টা পর যে Gmail Accountগুলো ঠিক থাকবে/নষ্ট হবে না, সেগুলোর টাকা (প্রতিটিতে ৳২৫) আপনার ব্যালেন্সে যোগ হয়ে যাবে।\n"
-        "🔹 আর যে Gmail Accountগুলো নষ্ট হয়ে যাবে, সেগুলোর জন্য টাকা যোগ হবে না এবং অ্যাকাউন্টগুলো আপনাকে ফেরত দেওয়া হবে।\n\n"
-        "⚠️ দয়া করে শুধু Valid Gmail Account সাবমিট করুন এবং উপরের নিয়মগুলো মেনে চলুন।\n\n"
-        "💚 ধন্যবাদ আমাদের সাথে থাকার জন্য।\n"
-        "সুন্দর ও নিরাপদ লেনদেনের শুভকামনা!"
+        "📌 ৩টি ধাপে সাবমিশন যাচাই পদ্ধতি:\n"
+        "🔹 ধাপ ১: ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক রিসিভ করবেন এবং যে জিমেইলগুলো লগইন করা যায় সেগুলো পর্যালোচনায় রাখবেন। যেগুলোতে লগইন সমস্যা থাকবে সেগুলো ১ম ধাপেই বাতিল ও ফেরত দেওয়া হবে।\n"
+        "🔹 ধাপ ২: পর্যালোচনায় রাখা জিমেইলগুলো পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে। এই সময়ে ব্যালেন্স যোগ হবে না।\n"
+        "🔹 ধাপ ৩: ২৪ থেকে ৪৮ ঘণ্টা পর যে জিমেইলগুলো ঠিক থাকবে, সেগুলোর প্রতিটির জন্য ৳২৫ টাকা আপনার Balance-এ যোগ হয়ে যাবে! 💰\n"
+        "🔹 আর শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে ফেরত দেওয়া হবে।\n\n"
+        "⚠️ প্রতিদিন সর্বোচ্চ ৫টি ফাইল এবং প্রতি ফাইলে সর্বোচ্চ ৫টি ভ্যালিড Gmail দিতে পারবেন।"
     ),
     "sell": (
         "📤 আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।\n\n"
@@ -190,7 +187,7 @@ DEFAULT_MESSAGES = {
 }
 
 MESSAGE_NAMES = {
-    "rules": "📜 Rules & Welcome (2-Step Process)",
+    "rules": "📜 Rules & Welcome (3 Stages)",
     "sell": "📤 Sell Gmail Instruction",
     "referral": "👥 Referral Message",
     "support": "📞 Support Text",
@@ -368,6 +365,7 @@ def get_bottom_keyboard():
     btn_sell = get_button_title("sell", "📤 SELL FRESH GMAIL ACCOUNT")
     btn_bal = get_button_title("balance", "💰 BALANCE")
     btn_wd = get_button_title("withdraw", "💸 WITHDRAW")
+    btn_hist = get_button_title("history", "📜 হিস্ট্রি")
     btn_ref = get_button_title("referral", "👥 REFERRAL")
     btn_rules = get_button_title("rules", "📜 RULES")
     btn_sup = get_button_title("support", "📞 SUPPORT")
@@ -375,8 +373,8 @@ def get_bottom_keyboard():
     keyboard = [
         [KeyboardButton(btn_sell)],
         [KeyboardButton(btn_bal), KeyboardButton(btn_wd)],
-        [KeyboardButton(btn_ref), KeyboardButton(btn_rules)],
-        [KeyboardButton(btn_sup)]
+        [KeyboardButton(btn_hist), KeyboardButton(btn_ref)],
+        [KeyboardButton(btn_rules), KeyboardButton(btn_sup)]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -566,6 +564,7 @@ async def show_admin_panel(query):
 
     keyboard = [
         [InlineKeyboardButton(f"🛠 স্ট্যাটাস: {m_status}", callback_data="toggle_maintenance")],
+        [InlineKeyboardButton("📂 ফাইল হিস্ট্রি ও রিপোর্ট (Users Files)", callback_data="admin_file_history:0")],
         [InlineKeyboardButton("💬 বাটন মেসেজ কন্ট্রোল (Add/Edit/Delete)", callback_data="admin_messages_menu")],
         [InlineKeyboardButton("✏️ মেনু বাটন নাম এডিট", callback_data="admin_edit_buttons_menu")],
         [InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ / আবর্জনা মুছুন", callback_data="admin_clear_cache")],
@@ -580,26 +579,32 @@ async def show_admin_panel(query):
 
 
 # =========================================================
-# CALLBACK HANDLER (2-STEP RECEIVE & SELECTION SYSTEM)
+# 3-STAGE LOGIC & CALLBACKS
 # =========================================================
 
-admin_sub_selections = {}
+admin_stage1_selections = {}
+admin_stage3_selections = {}
 
 
-def build_final_step_keyboard(sub_id, emails, selected_indices):
-    """২য় ধাপ: সংখ্যা বাটন এবং কনফার্মেশন"""
+def build_stage_keyboard(sub_id, emails, selected_indices, stage_num):
     num_buttons = []
     for idx, _ in enumerate(emails):
         icon = "✅" if idx in selected_indices else "❌"
-        num_buttons.append(InlineKeyboardButton(f"[{idx+1}] {icon}", callback_data=f"sub_toggle:{sub_id}:{idx}"))
+        num_buttons.append(InlineKeyboardButton(f"[{idx+1}] {icon}", callback_data=f"sub_tg:{stage_num}:{sub_id}:{idx}"))
 
     chunked = [num_buttons[i:i + 3] for i in range(0, len(num_buttons), 3)]
 
-    action_rows = [
-        [InlineKeyboardButton(f"🚀 চূড়ান্ত অনুমোদন দিন ({len(selected_indices)}টি বৈধ / {len(emails)-len(selected_indices)}টি নষ্ট)", callback_data=f"sub_commit:{sub_id}")],
-        [InlineKeyboardButton("✅ সবগুলোই ঠিক আছে", callback_data=f"sub_accept_all:{sub_id}"),
-         InlineKeyboardButton("❌ সবগুলোই নষ্ট / বাতিল", callback_data=f"sub_reject_all:{sub_id}")]
-    ]
+    if stage_num == 1:
+        action_rows = [
+            [InlineKeyboardButton(f"🚀 ধাপ ১ নিশ্চিত করুন ({len(selected_indices)}টি পর্যালোচনায় / {len(emails)-len(selected_indices)}টি বাতিল)", callback_data=f"sub_c1:{sub_id}")],
+            [InlineKeyboardButton("❌ পুরো ফাইল বাতিল (Reject All)", callback_data=f"sub_reject_all:{sub_id}")]
+        ]
+    else:  # stage_num == 3
+        action_rows = [
+            [InlineKeyboardButton(f"💰 চূড়ান্ত অনুমোদন দিন ({len(selected_indices)}টি বৈধ - ৳{len(selected_indices)*25})", callback_data=f"sub_c3:{sub_id}")],
+            [InlineKeyboardButton("✅ সবগুলোই ঠিক আছে", callback_data=f"sub_accept_all_s3:{sub_id}"),
+             InlineKeyboardButton("❌ সবগুলোই নষ্ট (বাতিল)", callback_data=f"sub_reject_all_s3:{sub_id}")]
+        ]
 
     return InlineKeyboardMarkup(chunked + action_rows)
 
@@ -692,9 +697,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("✏️ Sell বাটন", callback_data="edit_btn:sell"),
              InlineKeyboardButton("✏️ Balance বাটন", callback_data="edit_btn:balance")],
             [InlineKeyboardButton("✏️ Withdraw বাটন", callback_data="edit_btn:withdraw"),
-             InlineKeyboardButton("✏️ Referral বাটন", callback_data="edit_btn:referral")],
-            [InlineKeyboardButton("✏️ Rules বাটন", callback_data="edit_btn:rules"),
-             InlineKeyboardButton("✏️ Support বাটন", callback_data="edit_btn:support")],
+             InlineKeyboardButton("✏️ History বাটন", callback_data="edit_btn:history")],
+            [InlineKeyboardButton("✏️ Referral বাটন", callback_data="edit_btn:referral"),
+             InlineKeyboardButton("✏️ Rules বাটন", callback_data="edit_btn:rules")],
+            [InlineKeyboardButton("✏️ Support বাটন", callback_data="edit_btn:support")],
             [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
         ]
         await query.edit_message_text("✏️ কোন বাটনটির নাম পরিবর্তন করতে চান?", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -744,21 +750,123 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_balance = db_execute("SELECT COALESCE(SUM(balance),0) AS total FROM users", fetchone=True)["total"]
         total_usdt = float(total_balance) / USDT_RATE
         pending = db_execute("SELECT COUNT(*) AS c FROM withdrawals WHERE status='pending'", fetchone=True)["c"]
-        pending_files = db_execute("SELECT COUNT(*) AS c FROM submissions WHERE status IN ('pending', 'in_review')", fetchone=True)["c"]
+        pending_files = db_execute("SELECT COUNT(*) AS c FROM submissions WHERE status IN ('pending', 'stage2_review')", fetchone=True)["c"]
 
         await query.edit_message_text(
             f"📊 Admin Statistics\n\n"
             f"👤 মোট ইউজার: {users}\n"
             f"💰 মোট ব্যালেন্স: ৳{float(total_balance):.2f} BDT (${total_usdt:.2f} USDT)\n"
             f"💸 পেন্ডিং উইথড্র: {pending}\n"
-            f"📁 প্রক্রিয়াধীন ফাইল (চলতি): {pending_files}",
+            f"📁 চলমান ফাইল (পেন্ডিং/পর্যবেক্ষণে): {pending_files}",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
         )
 
     # -------------------------------------------------------------
-    # ধাপ ১: প্রাথমিক রিসিভ (INITIAL RECEIVE - NO BALANCE ADDED)
+    # অ্যাডমিন ফাইল হিস্ট্রি ও এক্সেল ডাউনলোড
     # -------------------------------------------------------------
-    elif data.startswith("sub_initial_rcv:"):
+    elif data.startswith("admin_file_history:"):
+        if user_id != admin_id:
+            return
+        page = int(data.split(":")[1])
+        limit = 5
+        offset = page * limit
+        subs = db_execute("SELECT * FROM submissions ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset), fetchall=True)
+        total_subs = db_execute("SELECT COUNT(*) AS c FROM submissions", fetchone=True)["c"]
+
+        if not subs:
+            await query.edit_message_text("📂 কোনো সাবমিশন ফাইল পাওয়া যায়নি।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]]))
+            return
+
+        kb = []
+        for s in subs:
+            emails = json.loads(s["emails_json"])
+            st_text = "🟡 নতুন" if s["status"] == "pending" else ("🟠 পর্যবেক্ষণে" if s["status"] == "stage2_review" else ("🟢 সম্পন্ন" if s["status"] == "completed" else "🔴 বাতিল"))
+            btn_text = f"#{s['id']} | User: {s['user_id']} | {len(emails)}টি ({st_text})"
+            kb.append([InlineKeyboardButton(btn_text, callback_data=f"adm_view_sub:{s['id']}")])
+
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"admin_file_history:{page-1}"))
+        if offset + limit < total_subs:
+            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_file_history:{page+1}"))
+
+        if nav_buttons:
+            kb.append(nav_buttons)
+        kb.append([InlineKeyboardButton("⬅️ Back to Panel", callback_data="admin_panel")])
+
+        await query.edit_message_text(f"📂 সকল ইউজারদের ফাইল তালিকা (মোট: {total_subs} টি):\nফাইল দেখতে ক্লিক করুন:", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif data.startswith("adm_view_sub:"):
+        if user_id != admin_id:
+            return
+        sub_id = int(data.split(":")[1])
+        s = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not s:
+            await query.answer("ফাইল পাওয়া যায়নি!")
+            return
+
+        emails = json.loads(s["emails_json"])
+        review_emails = json.loads(s["in_review_json"]) if s["in_review_json"] else []
+        mail_list = "\n".join([f"{i+1}. {m}" for i, m in enumerate(emails)])
+
+        st_map = {
+            "pending": "🟡 ধাপ ১: নতুন পেন্ডিং",
+            "stage2_review": "🟠 ধাপ ২: ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে",
+            "completed": "🟢 ধাপ ৩: চূড়ান্ত অনুমোদিত (সম্পন্ন)",
+            "rejected": "🔴 সম্পূর্ণ বাতিল"
+        }
+
+        info_text = (
+            f"📄 সাবমিশন বিস্তারিত (#{s['id']})\n\n"
+            f"👤 ইউজার আইডি: `{s['user_id']}`\n"
+            f"📅 তারিখ: {s['created_at'][:19]}\n"
+            f"⚡ স্ট্যাটাস: {st_map.get(s['status'], s['status'])}\n"
+            f"🔹 মূল জিমেইল: {len(emails)} টি\n"
+            f"🔹 পর্যালোচনায় নেওয়া হয়েছিল: {len(review_emails)} টি\n"
+            f"🔹 চূড়ান্ত অনুমোদিত: {s['accepted_count']} টি (৳{s['accepted_count']*25})\n\n"
+            f"📋 জিমেইল তালিকা:\n{mail_list}"
+        )
+
+        action_kb = [
+            [InlineKeyboardButton("📥 ডাউনলোড এক্সেল ফাইল (.xlsx)", callback_data=f"adm_dl_excel:{sub_id}")],
+            [InlineKeyboardButton("⬅️ ফাইল তালিকায় ফিরুন", callback_data="admin_file_history:0")]
+        ]
+        await query.edit_message_text(info_text, reply_markup=InlineKeyboardMarkup(action_kb), parse_mode="Markdown")
+
+    elif data.startswith("adm_dl_excel:"):
+        if user_id != admin_id:
+            return
+        sub_id = int(data.split(":")[1])
+        s = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not s:
+            await query.answer("ফাইল পাওয়া যায়নি!")
+            return
+
+        emails = json.loads(s["emails_json"])
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Submission_{sub_id}"
+        ws.append(["Index", "Gmail Account", "Submission ID", "User ID"])
+
+        for i, em in enumerate(emails, 1):
+            ws.append([i, em, sub_id, s["user_id"]])
+
+        bio = io.BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+        bio.name = f"user_{s['user_id']}_sub_{sub_id}.xlsx"
+
+        await context.bot.send_document(
+            chat_id=admin_id,
+            document=bio,
+            caption=f"📂 ইউজার `{s['user_id']}` এর সাবমিশন (#{sub_id}) এক্সেল ফাইল প্রস্তুত।"
+        )
+        await query.answer("এক্সেল ফাইল পাঠানো হয়েছে!")
+
+    # -------------------------------------------------------------
+    # ধাপ ১: প্রাথমিক রিসিভ ও সিলেকশন (INITIAL RECEIVE)
+    # -------------------------------------------------------------
+    elif data.startswith("sub_s1_open:"):
         if user_id != admin_id:
             return
         sub_id = int(data.split(":")[1])
@@ -767,111 +875,166 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Already processed.", show_alert=True)
             return
 
-        db_execute("UPDATE submissions SET status='in_review' WHERE id=?", (sub_id,))
+        emails = json.loads(sub["emails_json"])
+        if sub_id not in admin_stage1_selections:
+            admin_stage1_selections[sub_id] = set(range(len(emails)))
+
+        kb = build_stage_keyboard(sub_id, emails, admin_stage1_selections[sub_id], stage_num=1)
+        await query.edit_message_caption(
+            caption=(
+                f"📥 **ধাপ ১: প্রাথমিক বাছাই (#{sub_id})**\n"
+                f"👤 ইউজার: {sub['user_id']}\n\n"
+                f"যেসব জিমেইল লগইন করা যায় সেগুলো ✅ (পর্যালোচনায় রাখুন) এবং যেসব জিমেইলে লগইন সমস্যা সেগুলো ❌ (বাতিল করুন)।\n"
+                f"তারপর নিচে কনফার্ম করুন:"
+            ),
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("sub_tg:"):
+        if user_id != admin_id:
+            return
+        parts = data.split(":")
+        stage_num = int(parts[1])
+        sub_id = int(parts[2])
+        idx = int(parts[3])
+
+        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not sub:
+            return
+
+        if stage_num == 1:
+            emails = json.loads(sub["emails_json"])
+            if sub_id not in admin_stage1_selections:
+                admin_stage1_selections[sub_id] = set(range(len(emails)))
+            if idx in admin_stage1_selections[sub_id]:
+                admin_stage1_selections[sub_id].remove(idx)
+            else:
+                admin_stage1_selections[sub_id].add(idx)
+            kb = build_stage_keyboard(sub_id, emails, admin_stage1_selections[sub_id], stage_num=1)
+        else:
+            emails = json.loads(sub["in_review_json"])
+            if sub_id not in admin_stage3_selections:
+                admin_stage3_selections[sub_id] = set(range(len(emails)))
+            if idx in admin_stage3_selections[sub_id]:
+                admin_stage3_selections[sub_id].remove(idx)
+            else:
+                admin_stage3_selections[sub_id].add(idx)
+            kb = build_stage_keyboard(sub_id, emails, admin_stage3_selections[sub_id], stage_num=3)
+
+        await query.edit_message_reply_markup(reply_markup=kb)
+
+    elif data.startswith("sub_c1:"):
+        if user_id != admin_id:
+            return
+        sub_id = int(data.split(":")[1])
+        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not sub or sub["status"] != "pending":
+            return
 
         emails = json.loads(sub["emails_json"])
-        mail_list = "\n".join([f"{i+1}. {m}" for i, m in enumerate(emails)])
+        selected = admin_stage1_selections.get(sub_id, set(range(len(emails))))
+
+        in_review_emails = [emails[i] for i in sorted(list(selected))]
+        s1_rejected = [emails[i] for i in range(len(emails)) if i not in selected]
+
+        if not in_review_emails:
+            await query.answer("কমপক্ষে একটি জিমেইল পর্যালোচনায় রাখতে হবে!", show_alert=True)
+            return
+
+        db_execute("""
+            UPDATE submissions 
+            SET status='stage2_review', in_review_json=?, rejected_count=?
+            WHERE id=?
+        """, (json.dumps(in_review_emails), len(s1_rejected), sub_id))
+
+        admin_stage1_selections.pop(sub_id, None)
 
         next_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔍 চূড়ান্ত যাচাই করুন (২৪-৪৮ ঘণ্টা পর)", callback_data=f"sub_open:{sub_id}")],
+            [InlineKeyboardButton(f"🔍 ধাপ ৩: চূড়ান্ত অনুমোদন দিন ({len(in_review_emails)}টি)", callback_data=f"sub_s3_open:{sub_id}")],
             [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_reject_all:{sub_id}")]
         ])
 
         await query.edit_message_caption(
             caption=(
-                f"📥 ফাইল প্রাথমিক রিসিভ সম্পন্ন (#{sub_id})\n"
-                f"👤 ইউজার ID: {sub['user_id']}\n"
-                f"✉️ জিমেইল সংখ্যা: {len(emails)} টি\n\n"
-                f"📋 জিমেইল তালিকা:\n{mail_list}\n\n"
-                f"⏳ স্ট্যাটাস: **২৪-৪৮ ঘণ্টা পর্যবেক্ষণে রয়েছে**। পর্যবেক্ষণ শেষে নিচের বাটনে চাপ দিয়ে চূড়ান্ত অনুমোদন দিন।"
+                f"⏳ **ধাপ ১ সম্পন্ন - ধাপ ২ (২৪-৪৮ ঘণ্টা পর্যবেক্ষণ চলছে)** (#{sub_id})\n\n"
+                f"👤 ইউজার: {sub['user_id']}\n"
+                f"🔹 পর্যালোচনায় নেওয়া হয়েছে: {len(in_review_emails)} টি\n"
+                f"🔹 লগইন না হওয়ায় বাতিল: {len(s1_rejected)} টি\n\n"
+                f"২৪ থেকে ৪৮ ঘণ্টা পর নিচের বাটনে চাপ দিয়ে চূড়ান্ত যাচাই করুন।"
             ),
             reply_markup=next_kb,
             parse_mode="Markdown"
         )
 
-        # ইউজারকে নোটিফিকেশন পাঠানো (কোনো ব্যালেন্স ছাড়া)
         user_msg = (
-            f"📥 **আপনার জিমেইল ফাইলটি অ্যাডমিন সফলভাবে রিসিভ করেছেন!**\n\n"
-            f"🔹 সাবমিশন আইডি: #{sub_id}\n"
-            f"🔹 জিমেইল সংখ্যা: {len(emails)} টি\n\n"
-            f"📌 **জরুরি তথ্য:**\n"
-            f"আপনার জিমেইলগুলো আগামী **২৪ থেকে ৪৮ ঘণ্টা** পর্যবেক্ষণে রাখা হবে। "
-            f"পর্যবেক্ষণ শেষে যে জিমেইলগুলো ঠিক থাকবে, সেগুলোর টাকা (প্রতিটিতে ৳{REWARD_PER_EMAIL:.2f}) স্বয়ংক্রিয়ভাবে ব্যালেন্সে যোগ হবে এবং নষ্ট জিমেইলগুলো আপনাকে ফেরত দেওয়া হবে।\n\n"
-            f"ধন্যবাদ আমাদের সাথে থাকার জন্য।"
+            f"📋 **আপনার জিমেইল সাবমিশনের ১ম ধাপের আপডেট!** (#{sub_id})\n\n"
+            f"🔹 পর্যালোচনায় রাখা হয়েছে: {len(in_review_emails)} টি\n"
+            f"❌ লগইন না হওয়ায় বাতিল: {len(s1_rejected)} টি\n\n"
+            f"📌 **জরুরি তথ্য:** পর্যালোচনায় থাকা {len(in_review_emails)}টি জিমেইল আগামী **২৪ থেকে ৪৮ ঘণ্টা** পর্যবেক্ষণে থাকবে। "
+            f"পর্যবেক্ষণ শেষে যে জিমেইলগুলো ঠিক থাকবে, প্রতিটির জন্য ৳২৫ টাকা আপনার ব্যালেন্সে স্বয়ংক্রিয়ভাবে যোগ হবে।"
         )
         try:
-            await context.bot.send_message(chat_id=sub["user_id"], text=user_msg, parse_mode="Markdown")
+            await context.bot.send_message(chat_id=sub["user_id"], text=user_msg)
         except Exception:
             pass
 
+        if s1_rejected:
+            rej_content = "লগইন সমস্যা থাকায় বাতিল হওয়া জিমেইল তালিকা:\n" + "\n".join(s1_rejected)
+            bio = io.BytesIO(rej_content.encode('utf-8'))
+            bio.name = f"stage1_rejected_{sub_id}.txt"
+            try:
+                await context.bot.send_document(
+                    chat_id=sub["user_id"],
+                    document=bio,
+                    caption=f"⚠️ {len(s1_rejected)}টি জিমেইলে লগইন সমস্যা থাকায় ফেরত দেওয়া হলো।"
+                )
+            except Exception:
+                pass
+
     # -------------------------------------------------------------
-    # ধাপ ২: চূড়ান্ত যাচাই (FINAL REVIEW & INDIVIDUAL TOGGLE)
+    # ধাপ ৩: চূড়ান্ত অনুমোদন ও ক্লোজ (FINAL APPROVE)
     # -------------------------------------------------------------
-    elif data.startswith("sub_open:"):
+    elif data.startswith("sub_s3_open:"):
         if user_id != admin_id:
             return
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
-        if not sub or sub["status"] not in ["pending", "in_review"]:
+        if not sub or sub["status"] != "stage2_review":
             await query.answer("Already processed.", show_alert=True)
             return
 
-        emails = json.loads(sub["emails_json"])
-        if sub_id not in admin_sub_selections:
-            # ডিফল্টভাবে সবগুলো সিলেক্টেড (✅) থাকবে
-            admin_sub_selections[sub_id] = set(range(len(emails)))
+        review_emails = json.loads(sub["in_review_json"])
+        if sub_id not in admin_stage3_selections:
+            admin_stage3_selections[sub_id] = set(range(len(review_emails)))
 
-        kb = build_final_step_keyboard(sub_id, emails, admin_sub_selections[sub_id])
+        kb = build_stage_keyboard(sub_id, review_emails, admin_stage3_selections[sub_id], stage_num=3)
         await query.edit_message_caption(
             caption=(
-                f"📋 চূড়ান্ত যাচাইকরণ (#{sub_id})\n"
-                f"👤 ইউজার ID: {sub['user_id']}\n\n"
-                f"নিচের নম্বর বাটনগুলোতে ক্লিক করে যেসব জিমেইল ঠিক আছে সেগুলো ✅ (বৈধ) রাখুন এবং সমস্যাযুক্ত জিমেইল ❌ (নষ্ট) করে দিন। "
-                f"এরপর 'চূড়ান্ত অনুমোদন দিন' চাপুন:"
+                f"💰 **ধাপ ৩: চূড়ান্ত অনুমোদন (#{sub_id})**\n"
+                f"👤 ইউজার: {sub['user_id']}\n\n"
+                f"পর্যালোচনায় থাকা {len(review_emails)}টি জিমেইল চেক করুন। যেগুলো অক্ষত/ঠিক আছে সেগুলো ✅ রাখুন এবং নষ্ট জিমেইলগুলো ❌ করে অনুমোদন দিন:"
             ),
-            reply_markup=kb
+            reply_markup=kb,
+            parse_mode="Markdown"
         )
 
-    elif data.startswith("sub_toggle:"):
-        if user_id != admin_id:
-            return
-        parts = data.split(":")
-        sub_id = int(parts[1])
-        idx = int(parts[2])
-
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
-        if not sub or sub["status"] not in ["pending", "in_review"]:
-            return
-
-        emails = json.loads(sub["emails_json"])
-        if sub_id not in admin_sub_selections:
-            admin_sub_selections[sub_id] = set(range(len(emails)))
-
-        if idx in admin_sub_selections[sub_id]:
-            admin_sub_selections[sub_id].remove(idx)
-        else:
-            admin_sub_selections[sub_id].add(idx)
-
-        kb = build_final_step_keyboard(sub_id, emails, admin_sub_selections[sub_id])
-        await query.edit_message_reply_markup(reply_markup=kb)
-
-    elif data.startswith("sub_commit:"):
+    elif data.startswith("sub_c3:"):
         if user_id != admin_id:
             return
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
-        if not sub or sub["status"] not in ["pending", "in_review"]:
-            await query.answer("Already processed.", show_alert=True)
+        if not sub or sub["status"] != "stage2_review":
             return
 
-        emails = json.loads(sub["emails_json"])
-        selected = admin_sub_selections.get(sub_id, set(range(len(emails))))
+        review_emails = json.loads(sub["in_review_json"])
+        selected = admin_stage3_selections.get(sub_id, set(range(len(review_emails))))
 
-        accepted_emails = [emails[i] for i in sorted(list(selected))]
-        rejected_emails = [emails[i] for i in range(len(emails)) if i not in selected]
+        final_accepted = [review_emails[i] for i in sorted(list(selected))]
+        final_rejected = [review_emails[i] for i in range(len(review_emails)) if i not in selected]
 
-        total_accepted = len(accepted_emails)
-        total_rejected = len(rejected_emails)
+        total_accepted = len(final_accepted)
+        total_rejected = sub["rejected_count"] + len(final_rejected)
         reward = total_accepted * REWARD_PER_EMAIL
 
         db_execute("""
@@ -883,75 +1046,93 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if total_accepted > 0:
             update_balance(sub["user_id"], reward)
 
-        admin_sub_selections.pop(sub_id, None)
+        admin_stage3_selections.pop(sub_id, None)
 
         await query.edit_message_caption(
             caption=(
-                f"✅ চূড়ান্ত অনুমোদন সম্পন্ন (#{sub_id})!\n\n"
-                f"🔹 মোট ভ্যালিড (রিসিভ): {total_accepted} টি\n"
-                f"🔹 বাতিল / নষ্ট: {total_rejected} টি\n"
-                f"💰 ইউজারকে দেওয়া হয়েছে (৳২৫ হারে): ৳{reward:.2f} BDT"
-            )
+                f"✅ **সাবমিশন চূড়ান্তভাবে সম্পন্ন ও ক্লোজ হয়েছে! (#{sub_id})**\n\n"
+                f"🔹 চূড়ান্ত ভ্যালিড: {total_accepted} টি\n"
+                f"🔹 মোট বাতিল: {total_rejected} টি\n"
+                f"💰 ব্যালেন্সে যোগ হয়েছে: ৳{reward:.2f} BDT"
+            ),
+            parse_mode="Markdown"
         )
 
         user_msg = (
-            f"🎉 **আপনার জিমেইল অ্যাকাউন্টের চূড়ান্ত পর্যবেক্ষণ সম্পন্ন হয়েছে!**\n\n"
-            f"🔹 মোট জমা ছিল: {len(emails)} টি\n"
-            f"✅ সম্পূর্ণ ভ্যালিড পাওয়া গেছে: {total_accepted} টি\n"
-            f"💰 প্রতিটিতে ৳২৫ হারে আপনার ব্যালেন্সে যোগ হয়েছে: ৳{reward:.2f} BDT\n"
+            f"🎉 **অভিনন্দন! আপনার জিমেইল অ্যাকাউন্টের চূড়ান্ত পর্যবেক্ষণ সম্পন্ন হয়েছে!**\n\n"
+            f"🔹 সাবমিশন আইডি: #{sub_id}\n"
+            f"✅ সফলভাবে অ্যাপ্রুভ হয়েছে: {total_accepted} টি\n"
+            f"💰 প্রতিটিতে ৳২৫ হারে আপনার ব্যালেন্সে যোগ হয়েছে: ৳{reward:.2f} BDT!\n"
         )
-        if total_rejected > 0:
-            user_msg += f"⚠️ {total_rejected}টি জিমেইলে সমস্যা থাকায় বাতিল করা হয়েছে এবং ফেরত পাঠানো হলো।"
+        if final_rejected:
+            user_msg += f"⚠️ পর্যবেক্ষণে {len(final_rejected)}টি নষ্ট হওয়ায় বাতিল করা হয়েছে।"
 
         try:
-            await context.bot.send_message(chat_id=sub["user_id"], text=user_msg, parse_mode="Markdown")
+            await context.bot.send_message(chat_id=sub["user_id"], text=user_msg)
         except Exception:
             pass
 
-        # বাতিল হওয়া জিমেইলগুলো ফাইল আকারে ফেরত পাঠানো
-        if total_rejected > 0:
-            reject_file_content = "সমস্যাযুক্ত ও বাতিল হওয়া জিমেইল তালিকা:\n" + "\n".join(rejected_emails)
-            bio = io.BytesIO(reject_file_content.encode('utf-8'))
-            bio.name = f"rejected_gmails_sub_{sub_id}.txt"
-
-            reject_caption = (
-                f"⚠️ **{total_rejected}টি জিমেইল অ্যাকাউন্টে সমস্যা থাকায় বাতিল করা হয়েছে!**\n\n"
-                f"বাতিলকৃত জিমেইলগুলো সংযুক্ত ফাইলে ফেরত দেওয়া হলো।"
-            )
+        if final_rejected:
+            rej_content = "পর্যবেক্ষণে নষ্ট হওয়া জিমেইল তালিকা:\n" + "\n".join(final_rejected)
+            bio = io.BytesIO(rej_content.encode('utf-8'))
+            bio.name = f"stage3_rejected_{sub_id}.txt"
             try:
                 await context.bot.send_document(
                     chat_id=sub["user_id"],
                     document=bio,
-                    caption=reject_caption,
-                    parse_mode="Markdown"
+                    caption=f"⚠️ {len(final_rejected)}টি জিমেইল নষ্ট হওয়ায় ফেরত দেওয়া হলো।"
                 )
             except Exception:
                 pass
 
-    elif data.startswith("sub_accept_all:"):
+    elif data.startswith("sub_accept_all_s3:"):
         if user_id != admin_id:
             return
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
-        if not sub or sub["status"] not in ["pending", "in_review"]:
+        if not sub or sub["status"] != "stage2_review":
             return
 
-        emails = json.loads(sub["emails_json"])
-        total_accepted = len(emails)
+        review_emails = json.loads(sub["in_review_json"])
+        total_accepted = len(review_emails)
         reward = total_accepted * REWARD_PER_EMAIL
 
-        db_execute("UPDATE submissions SET status='completed', accepted_count=?, rejected_count=0 WHERE id=?", (total_accepted, sub_id))
+        db_execute("UPDATE submissions SET status='completed', accepted_count=? WHERE id=?", (total_accepted, sub_id))
         update_balance(sub["user_id"], reward)
-        admin_sub_selections.pop(sub_id, None)
+        admin_stage3_selections.pop(sub_id, None)
 
-        await query.edit_message_caption(caption=f"✅ সবকটি ({total_accepted}টি) জিমেইল সফলভাবে অনুমোদিত! ইউজারকে ৳{reward:.2f} BDT যোগ করা হয়েছে।")
+        await query.edit_message_caption(caption=f"✅ সবকটি ({total_accepted}টি) জিমেইল সফলভাবে অনুমোদিত! যোগ হয়েছে: ৳{reward:.2f} BDT।")
         try:
             await context.bot.send_message(
                 chat_id=sub["user_id"],
-                text=(
-                    f"🎉 অভিনন্দন! আপনার দেওয়া সবকটি ({total_accepted}টি) জিমেইল অক্ষত থাকায় অনুমোদিত হয়েছে।\n"
-                    f"💰 আপনার ব্যালেন্সে ৳{reward:.2f} BDT যোগ করা হয়েছে!"
-                )
+                text=f"🎉 আপনার পর্যবেক্ষণে থাকা সবকটি ({total_accepted}টি) জিমেইল সফলভাবে অনুমোদিত হয়েছে!\n💰 ব্যালেন্সে যোগ হয়েছে ৳{reward:.2f} BDT।"
+            )
+        except Exception:
+            pass
+
+    elif data.startswith("sub_reject_all_s3:"):
+        if user_id != admin_id:
+            return
+        sub_id = int(data.split(":")[1])
+        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not sub or sub["status"] != "stage2_review":
+            return
+
+        review_emails = json.loads(sub["in_review_json"])
+        total_rej = sub["rejected_count"] + len(review_emails)
+        db_execute("UPDATE submissions SET status='rejected', accepted_count=0, rejected_count=? WHERE id=?", (total_rej, sub_id))
+        admin_stage3_selections.pop(sub_id, None)
+
+        await query.edit_message_caption(caption=f"❌ পর্যবেক্ষণে থাকা সবকটি ({len(review_emails)}টি) জিমেইল নষ্ট হওয়ায় বাতিল।")
+
+        rej_content = "নষ্ট হওয়া জিমেইল তালিকা:\n" + "\n".join(review_emails)
+        bio = io.BytesIO(rej_content.encode('utf-8'))
+        bio.name = f"rejected_all_sub_{sub_id}.txt"
+        try:
+            await context.bot.send_document(
+                chat_id=sub["user_id"],
+                document=bio,
+                caption="❌ পর্যবেক্ষণে আপনার সবগুলো জিমেইল নষ্ট হওয়ায় বাতিল ও ফেরত দেওয়া হলো।"
             )
         except Exception:
             pass
@@ -961,25 +1142,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
-        if not sub or sub["status"] not in ["pending", "in_review"]:
+        if not sub:
             return
 
         emails = json.loads(sub["emails_json"])
         db_execute("UPDATE submissions SET status='rejected', accepted_count=0, rejected_count=? WHERE id=?", (len(emails), sub_id))
-        admin_sub_selections.pop(sub_id, None)
 
         await query.edit_message_caption(caption=f"❌ পুরো ফাইল ({len(emails)}টি জিমেইল) বাতিল করা হয়েছে।")
-
-        reject_file_content = "সম্পূর্ণ বাতিলকৃত জিমেইল তালিকা:\n" + "\n".join(emails)
-        bio = io.BytesIO(reject_file_content.encode('utf-8'))
-        bio.name = f"all_rejected_sub_{sub_id}.txt"
-
+        bio = io.BytesIO(("সম্পূর্ণ বাতিলকৃত জিমেইল:\n" + "\n".join(emails)).encode('utf-8'))
+        bio.name = f"all_rejected_{sub_id}.txt"
         try:
-            await context.bot.send_document(
-                chat_id=sub["user_id"],
-                document=bio,
-                caption="❌ আপনার ফাইলের সবকটি জিমেইলে সমস্যা থাকায় সম্পূর্ণ ফাইলটি বাতিল ও ফেরত দেওয়া হলো।"
-            )
+            await context.bot.send_document(chat_id=sub["user_id"], document=bio, caption="❌ আপনার ফাইলের সবগুলো জিমেইল বাতিল করা হয়েছে।")
         except Exception:
             pass
 
@@ -1055,6 +1228,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     btn_sell = get_button_title("sell", "📤 SELL FRESH GMAIL ACCOUNT")
     btn_bal = get_button_title("balance", "💰 BALANCE")
     btn_wd = get_button_title("withdraw", "💸 WITHDRAW")
+    btn_hist = get_button_title("history", "📜 হিস্ট্রি")
     btn_ref = get_button_title("referral", "👥 REFERRAL")
     btn_rules = get_button_title("rules", "📜 RULES")
     btn_sup = get_button_title("support", "📞 SUPPORT")
@@ -1080,6 +1254,41 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}")
         return
 
+    # ইউজার হিস্ট্রি বাটন (শুধুমাত্র চলমান ফাইল দেখাবে)
+    if text == btn_hist:
+        subs = db_execute(
+            "SELECT * FROM submissions WHERE user_id=? AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
+            (user.id,), 
+            fetchall=True
+        )
+        
+        if not subs:
+            await update.message.reply_text(
+                "📜 **বর্তমানে আপনার কোনো ফাইল প্রসেসিংয়ে নেই।**\n\n"
+                "নতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখতে পাবেন।"
+            )
+            return
+
+        hist_msg = "📋 **আপনার চলমান ফাইল সাবমিশন স্ট্যাটাস:**\n\n"
+        for s in subs:
+            emails = json.loads(s["emails_json"])
+            st_text = ""
+            if s["status"] == "pending":
+                st_text = "🟡 নতুন জমা (অ্যাডমিন পর্যালোচনার অপেক্ষায়)"
+            elif s["status"] == "stage2_review":
+                review_count = len(json.loads(s["in_review_json"])) if s["in_review_json"] else 0
+                st_text = f"🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে রয়েছে ({review_count}টি জিমেইল)"
+
+            hist_msg += (
+                f"📁 **ফাইল ID: #{s['id']}**\n"
+                f"📅 তারিখ: {s['created_at'][:10]}\n"
+                f"✉️ মোট জিমেইল: {len(emails)} টি\n"
+                f"⚡ স্ট্যাটাস: {st_text}\n"
+                f"-----------------------------\n"
+            )
+        await update.message.reply_text(hist_msg, parse_mode="Markdown")
+        return
+
     if text == btn_sell:
         count = get_today_file_count(user.id)
         if count >= DAILY_FILE_LIMIT:
@@ -1091,7 +1300,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"{sell_msg}\n\n"
             f"📊 আজকের সাবমিশন: {count}/{DAILY_FILE_LIMIT}\n"
-            f"💰 প্রতি ভ্যালিড জিমেইল রেট: ৳{REWARD_PER_EMAIL:.2f} BDT"
+            f"💰 প্রতি ভ্যালিড জিমেইল রেট: ৳{REWARD_PER_EMAIL:.2f} BDT\n"
+            f"⚠️ ফাইলে সর্বোচ্চ {MAX_EMAILS_PER_FILE}টি জিমেইল থাকতে পারবে।"
         )
         return
 
@@ -1327,13 +1537,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"✅ ফাইল সফলভাবে জমা হয়েছে!\n\n"
             f"🔍 মোট ভ্যালিড Gmail: {len(valid_emails)} টি।\n"
-            f"⏳ অ্যাডমিন ফাইলটি প্রাথমিক রিসিভ করার পর পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণ করা হবে।"
+            f"⏳ অ্যাডমিন প্রাথমিক বাছাইয়ের পর জিমেইলগুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণ করবেন।"
         )
 
         if admin_id:
             mail_preview = "\n".join([f"{i+1}. {m}" for i, m in enumerate(valid_emails)])
             admin_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক রিসিভ করুন", callback_data=f"sub_initial_rcv:{sub_id}")],
+                [InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক বাছাই ও রিসিভ", callback_data=f"sub_s1_open:{sub_id}")],
                 [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_reject_all:{sub_id}")]
             ])
             await context.bot.send_document(
