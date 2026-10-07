@@ -1,3 +1,5 @@
+import io
+import json
 import os
 import re
 import shutil
@@ -36,18 +38,19 @@ ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "mysecretadmin123")
 
 MIN_WITHDRAW = 50
 WITHDRAW_FEE_PERCENT = 4
-REWARD_PER_FILE = 25
+REWARD_PER_EMAIL = 25.0  # প্রতি ভ্যালিড জিমেইল অ্যাকাউন্টে ২৫ টাকা
 DAILY_FILE_LIMIT = 5
+MAX_EMAILS_PER_FILE = 5
 
 REFERRAL_BONUS = 5.0
 USDT_RATE = 124.0
 
 DB_NAME = "bot.db"
-PORT = int(os.getenv("PORT", "10000"))
+PORT = int(os.environ.get("PORT", 10000))
 
 
 # =========================================================
-# RENDER WEB SERVER
+# RENDER WEB SERVER (FIXED FOR UPTIMEROBOT HEAD REQUESTS)
 # =========================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -56,6 +59,11 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
         self.wfile.write(b"Telegram bot is running.")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
 
     def log_message(self, format, *args):
         return
@@ -126,7 +134,9 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             file_id TEXT,
-            valid_emails INTEGER DEFAULT 0,
+            emails_json TEXT,
+            accepted_count INTEGER DEFAULT 0,
+            rejected_count INTEGER DEFAULT 0,
             status TEXT DEFAULT 'pending',
             created_at TEXT
         )
@@ -151,18 +161,21 @@ DEFAULT_MESSAGES = {
         "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করতে পারবেন।\n\n"
         "📌 গুরুত্বপূর্ণ নিয়মাবলি:\n"
         "🔹 প্রতিদিন সর্বোচ্চ ৫টি Gmail Account সাবমিট করতে পারবেন।\n"
+        "🔹 প্রতিটি ভ্যালিড Gmail অ্যাকাউন্টের মূল্য ৳২৫ টাকা। 💰\n"
         "🔹 প্রতিটি Gmail অবশ্যই Valid এবং ব্যবহারযোগ্য হতে হবে।\n"
-        "🔹 Gmail সাবমিট করার পর সর্বোচ্চ ২৪ ঘণ্টার মধ্যে আপনার Gmail রিসিভ করা হবে।\n"
-        "🔹 Gmail রিসিভ হওয়ার পর অ্যাডমিন আপনাকে মেসেজের মাধ্যমে জানিয়ে দেবে।\n"
-        "🔹 রিসিভ করার সময় থেকে পরবর্তী ২৪ ঘণ্টা Gmail-এর স্ট্যাটাস পর্যবেক্ষণ করা হবে।\n"
-        "🔹 ২৪ ঘণ্টা পর যে Gmail Accountগুলো ঠিক থাকবে, সেগুলোর টাকা Balance-এ যোগ হয়ে যাবে। 💰\n"
-        "🔹 আর নষ্ট হওয়া Gmailগুলোর টাকা যোগ হবে না এবং অ্যাকাউন্টগুলো ফেরত দেওয়া হবে।\n\n"
-        "⚠️ দয়া করে শুধু Valid Gmail Account সাবমিট করুন।\n"
-        "💚 ধন্যবাদ আমাদের সাথে থাকার জন্য।"
+        "🔹 Gmail সাবমিট করার পর সর্বোচ্চ ২৪ থেকে ৪৮ ঘণ্টার মধ্যে আপনার Gmail রিসিভ করা হবে।\n"
+        "🔹 Gmail রিসিভ হওয়ার পর অ্যাডমিন আপনাকে মেসেজের মাধ্যমে জানিয়ে দেবে যে কয়টি জিমেইল রিসিভ হয়েছে।\n"
+        "🔹 অ্যাডমিন রিসিভ করার সময় থেকে পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা Gmail-এর স্ট্যাটাস পর্যবেক্ষণ করা হবে।\n"
+        "🔹 ২৪ থেকে ৪৮ ঘণ্টা পর যে Gmail Accountগুলো ঠিক থাকবে/নষ্ট হবে না, সেই Gmailগুলোর টাকা (প্রতিটিতে ৳২৫) আপনার Balance-এ যোগ হয়ে যাবে।\n"
+        "🔹 আর যে Gmail Accountগুলো নষ্ট বা বাতিল হয়ে যাবে, সেগুলোর জন্য টাকা যোগ হবে না এবং সেই Gmailগুলো আপনাকে ফেরত দেওয়া হবে।\n\n"
+        "⚠️ দয়া করে শুধু Valid Gmail Account সাবমিট করুন এবং উপরের নিয়মগুলো মেনে চলুন।\n\n"
+        "💚 ধন্যবাদ আমাদের সাথে থাকার জন্য।\n"
+        "সুন্দর ও নিরাপদ লেনদেনের শুভকামনা!"
     ),
     "sell": (
         "📤 আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।\n\n"
-        "⚠️ সতর্কতা: শুধুমাত্র @gmail.com ফরম্যাটের মেইল গ্রহণ করা হবে। অন্য কোনো মেইল গ্রহণযোগ্য নয়।"
+        "💰 প্রতি ভ্যালিড জিমেইল রেট: ৳২৫ BDT\n"
+        "⚠️ সতর্কতা: এক ফাইলে সর্বোচ্চ ৫টি @gmail.com থাকতে হবে। অন্য কোনো মেইল গ্রহণযোগ্য নয়।"
     ),
     "support": "যে কোনো সমস্যা বা সহযোগিতার জন্য সরাসরি সাপোর্টে যোগাযোগ করুন:",
     "maintenance": (
@@ -179,7 +192,7 @@ DEFAULT_MESSAGES = {
 }
 
 MESSAGE_NAMES = {
-    "rules": "📜 Rules & Welcome",
+    "rules": "📜 Rules & Welcome (24-48 Hours)",
     "sell": "📤 Sell Gmail Instruction",
     "referral": "👥 Referral Message",
     "support": "📞 Support Text",
@@ -341,8 +354,12 @@ def validate_gmail_file(file_path):
                     raw_entries.append(str(cell).strip())
 
     valid_gmails = [m for m in raw_entries if GMAIL_REGEX.match(m)]
-    unique_gmails = list(set(valid_gmails))
-    return len(raw_entries), len(unique_gmails), unique_gmails[:5]
+    unique_gmails = []
+    for g in valid_gmails:
+        if g not in unique_gmails:
+            unique_gmails.append(g)
+
+    return unique_gmails
 
 
 # =========================================================
@@ -565,8 +582,28 @@ async def show_admin_panel(query):
 
 
 # =========================================================
-# CALLBACK HANDLER
+# CALLBACK HANDLER & WORKFLOW
 # =========================================================
+
+admin_sub_selections = {}
+
+
+def build_submission_admin_keyboard(sub_id, emails, selected_indices):
+    num_buttons = []
+    for idx, _ in enumerate(emails):
+        icon = "✅" if idx in selected_indices else "❌"
+        num_buttons.append(InlineKeyboardButton(f"[{idx+1}] {icon}", callback_data=f"sub_toggle:{sub_id}:{idx}"))
+
+    chunked = [num_buttons[i:i + 3] for i in range(0, len(num_buttons), 3)]
+
+    action_rows = [
+        [InlineKeyboardButton(f"🚀 কনফার্ম করুন ({len(selected_indices)} রিসিভ / {len(emails)-len(selected_indices)} রিজেক্ট)", callback_data=f"sub_commit:{sub_id}")],
+        [InlineKeyboardButton("✅ সবগুলো রিসিভ করুন", callback_data=f"sub_accept_all:{sub_id}"),
+         InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_reject_all:{sub_id}")]
+    ]
+
+    return InlineKeyboardMarkup(chunked + action_rows)
+
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -598,7 +635,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"ক্যাশ ক্লিয়ার সম্পন্ন! {deleted}টি ফাইল মুছে ফেলা হয়েছে।", show_alert=True)
         await show_admin_panel(query)
 
-    # --- মেসেজ ম্যানেজমেন্ট মেনু ---
     elif data == "admin_messages_menu":
         if user_id != admin_id:
             return
@@ -614,7 +650,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_key = data.split(":")[1]
         current_text = get_custom_msg(msg_key)
         name = MESSAGE_NAMES.get(msg_key, msg_key)
-
         preview = current_text if len(current_text) <= 300 else current_text[:300] + "..."
 
         keyboard = [
@@ -636,13 +671,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_key = data.split(":")[1]
         context.user_data["editing_msg_key"] = msg_key
         context.user_data["state"] = "waiting_new_msg_text"
-
         tips = ""
         if msg_key == "rules":
             tips = "\n💡 টিপস: লেখার মধ্যে `{name}` দিলে সেখানে ইউজারের নাম বসবে।"
         elif msg_key == "referral":
             tips = "\n💡 টিপস: লেখার মধ্যে `{link}` দিলে রেফারেল লিংক এবং `{bonus}` দিলে বোনাসের টাকা বসবে।"
-
         await query.edit_message_text(f"✍️ **{MESSAGE_NAMES.get(msg_key)}** বাটনের জন্য নতুন মেসেজটি লিখে পাঠিয়ে দিন:{tips}\n\n(ক্যানসেল করতে /cancel পাঠান)")
 
     elif data.startswith("msg_del:"):
@@ -650,11 +683,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         msg_key = data.split(":")[1]
         delete_custom_msg(msg_key)
-        await query.answer("মেসেজ সফলভাবে রিসেট/মুছে ফেলা হয়েছে!", show_alert=True)
-        # প্রিভিউ পেজে ফেরত যাওয়া
+        await query.answer("মেসেজ সফলভাবে রিসেট করা হয়েছে!", show_alert=True)
         await button_handler(update, context)
 
-    # --- বাটন টাইটেল এডিট ---
     elif data == "admin_edit_buttons_menu":
         if user_id != admin_id:
             return
@@ -725,33 +756,177 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
         )
 
-    # Submissions
-    elif data.startswith("approve_sub:"):
+    # -------------------------------------------------------------
+    # SUBMISSION LOGIC: ১, ২, ৩, ৪, ৫ নির্বাচন ও প্রতিটিতে ৳২৫ হিসাব
+    # -------------------------------------------------------------
+    elif data.startswith("sub_open:"):
         if user_id != admin_id:
             return
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
         if not sub or sub["status"] != "pending":
+            await query.answer("Already processed.", show_alert=True)
             return
-        db_execute("UPDATE submissions SET status='approved' WHERE id=?", (sub_id,))
-        update_balance(sub["user_id"], REWARD_PER_FILE)
-        await query.edit_message_text(f"✅ Submission #{sub_id} Approved! ৳{REWARD_PER_FILE} যোগ হয়েছে।")
+
+        emails = json.loads(sub["emails_json"])
+        if sub_id not in admin_sub_selections:
+            admin_sub_selections[sub_id] = set(range(len(emails)))
+
+        kb = build_submission_admin_keyboard(sub_id, emails, admin_sub_selections[sub_id])
+        await query.edit_message_caption(
+            caption=f"📋 সাবমিশন (#{sub_id})\nইউজার ID: {sub['user_id']}\n\nনিচের সংখ্যা বাটনগুলো চেপে যে যে জিমেইল ঠিক আছে সেগুলো ✅ (রিসিভ) রাখুন এবং সমস্যাযুক্ত জিমেইল ❌ (বাতিল) করে কনফার্ম করুন:",
+            reply_markup=kb
+        )
+
+    elif data.startswith("sub_toggle:"):
+        if user_id != admin_id:
+            return
+        parts = data.split(":")
+        sub_id = int(parts[1])
+        idx = int(parts[2])
+
+        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not sub or sub["status"] != "pending":
+            return
+
+        emails = json.loads(sub["emails_json"])
+        if sub_id not in admin_sub_selections:
+            admin_sub_selections[sub_id] = set(range(len(emails)))
+
+        if idx in admin_sub_selections[sub_id]:
+            admin_sub_selections[sub_id].remove(idx)
+        else:
+            admin_sub_selections[sub_id].add(idx)
+
+        kb = build_submission_admin_keyboard(sub_id, emails, admin_sub_selections[sub_id])
+        await query.edit_message_reply_markup(reply_markup=kb)
+
+    elif data.startswith("sub_commit:"):
+        if user_id != admin_id:
+            return
+        sub_id = int(data.split(":")[1])
+        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not sub or sub["status"] != "pending":
+            await query.answer("Already processed.", show_alert=True)
+            return
+
+        emails = json.loads(sub["emails_json"])
+        selected = admin_sub_selections.get(sub_id, set(range(len(emails))))
+
+        accepted_emails = [emails[i] for i in sorted(list(selected))]
+        rejected_emails = [emails[i] for i in range(len(emails)) if i not in selected]
+
+        total_accepted = len(accepted_emails)
+        total_rejected = len(rejected_emails)
+        reward = total_accepted * REWARD_PER_EMAIL
+
+        db_execute("""
+            UPDATE submissions 
+            SET status='completed', accepted_count=?, rejected_count=?
+            WHERE id=?
+        """, (total_accepted, total_rejected, sub_id))
+
+        if total_accepted > 0:
+            update_balance(sub["user_id"], reward)
+
+        admin_sub_selections.pop(sub_id, None)
+
+        await query.edit_message_caption(
+            caption=(
+                f"✅ সাবমিশন (#{sub_id}) সম্পন্ন হয়েছে!\n\n"
+                f"🔹 রিসিভ করা হয়েছে: {total_accepted} টি\n"
+                f"🔹 রিজেক্ট করা হয়েছে: {total_rejected} টি\n"
+                f"💰 প্রতি জিমেইলে ৳২৫ হারে যোগ হয়েছে: ৳{reward:.2f} BDT"
+            )
+        )
+
+        user_msg = (
+            f"🔔 **আপনার সাবমিট করা জিমেইল অ্যাকাউন্টের আপডেট!**\n\n"
+            f"🔹 মোট জমা দেওয়া ছিল: {len(emails)} টি\n"
+            f"✅ অ্যাডমিন সফলভাবে রিসিভ করেছে: {total_accepted} টি\n"
+            f"💰 প্রতি অ্যাকাউন্টে ৳২৫ হারে যোগ হয়েছে: ৳{reward:.2f} BDT\n\n"
+            f"📌 **জরুরি নিয়ম:**\n"
+            f"রিসিভ করা জিমেইলগুলো আগামী **২৪ থেকে ৪৮ ঘণ্টা** পর্যবেক্ষণে রাখা হবে। "
+            f"২৪-৪৮ ঘণ্টা পর যে জিমেইলগুলো নষ্ট হবে না, সেগুলোর টাকা স্থায়ী থাকবে।"
+        )
         try:
-            await context.bot.send_message(chat_id=sub["user_id"], text=f"🎉 আপনার জিমেইল ফাইল অনুমোদিত হয়েছে! ৳{REWARD_PER_FILE} BDT ব্যালেন্সে যোগ হয়েছে।")
+            await context.bot.send_message(chat_id=sub["user_id"], text=user_msg, parse_mode="Markdown")
         except Exception:
             pass
 
-    elif data.startswith("reject_sub:"):
+        if total_rejected > 0:
+            reject_file_content = "সমস্যাযুক্ত ও বাতিল হওয়া জিমেইল তালিকা:\n" + "\n".join(rejected_emails)
+            bio = io.BytesIO(reject_file_content.encode('utf-8'))
+            bio.name = f"rejected_gmails_sub_{sub_id}.txt"
+
+            reject_caption = (
+                f"⚠️ **{total_rejected}টি জিমেইল অ্যাকাউন্টে সমস্যা থাকায় বাতিল করা হয়েছে!**\n\n"
+                f"বাতিলকৃত জিমেইলগুলো ফেরত দেওয়া হলো (সংযুক্ত ফাইলে দেখুন)। "
+                f"এগুলোর জন্য কোনো টাকা যোগ হয়নি। দয়া করে ফ্রেশ ও ভ্যালিড জিমেইল সাবমিট করুন।"
+            )
+            try:
+                await context.bot.send_document(
+                    chat_id=sub["user_id"],
+                    document=bio,
+                    caption=reject_caption,
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+
+    elif data.startswith("sub_accept_all:"):
         if user_id != admin_id:
             return
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
         if not sub or sub["status"] != "pending":
             return
-        db_execute("UPDATE submissions SET status='rejected' WHERE id=?", (sub_id,))
-        await query.edit_message_text(f"❌ Submission #{sub_id} Rejected.")
+
+        emails = json.loads(sub["emails_json"])
+        total_accepted = len(emails)
+        reward = total_accepted * REWARD_PER_EMAIL
+
+        db_execute("UPDATE submissions SET status='completed', accepted_count=?, rejected_count=0 WHERE id=?", (total_accepted, sub_id))
+        update_balance(sub["user_id"], reward)
+        admin_sub_selections.pop(sub_id, None)
+
+        await query.edit_message_caption(caption=f"✅ সবকটি ({total_accepted}টি) জিমেইল রিসিভ করা হয়েছে! ইউজারকে ৳{reward:.2f} BDT যোগ করে দেওয়া হয়েছে।")
         try:
-            await context.bot.send_message(chat_id=sub["user_id"], text="❌ আপনার ফাইলটি বাতিল করা হয়েছে। দয়া করে সঠিক ফ্রেশ জিমেইল ফাইল পাঠান।")
+            await context.bot.send_message(
+                chat_id=sub["user_id"],
+                text=(
+                    f"🎉 অভিনন্দন! আপনার দেওয়া সবকটি ({total_accepted}টি) জিমেইল সফলভাবে রিসিভ করা হয়েছে।\n"
+                    f"💰 ব্যালেন্সে যোগ হয়েছে: ৳{reward:.2f} BDT।\n\n"
+                    f"পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা জিমেইলগুলো পর্যবেক্ষণ করা হবে।"
+                )
+            )
+        except Exception:
+            pass
+
+    elif data.startswith("sub_reject_all:"):
+        if user_id != admin_id:
+            return
+        sub_id = int(data.split(":")[1])
+        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not sub or sub["status"] != "pending":
+            return
+
+        emails = json.loads(sub["emails_json"])
+        db_execute("UPDATE submissions SET status='rejected', accepted_count=0, rejected_count=? WHERE id=?", (len(emails), sub_id))
+        admin_sub_selections.pop(sub_id, None)
+
+        await query.edit_message_caption(caption=f"❌ পুরো ফাইল ({len(emails)}টি জিমেইল) বাতিল করা হয়েছে।")
+
+        reject_file_content = "সম্পূর্ণ বাতিলকৃত জিমেইল তালিকা:\n" + "\n".join(emails)
+        bio = io.BytesIO(reject_file_content.encode('utf-8'))
+        bio.name = f"all_rejected_sub_{sub_id}.txt"
+
+        try:
+            await context.bot.send_document(
+                chat_id=sub["user_id"],
+                document=bio,
+                caption="❌ আপনার ফাইলের সবকটি জিমেইলে সমস্যা থাকায় সম্পূর্ণ ফাইলটি বাতিল ও ফেরত দেওয়া হলো।"
+            )
         except Exception:
             pass
 
@@ -831,13 +1006,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     btn_rules = get_button_title("rules", "📜 RULES")
     btn_sup = get_button_title("support", "📞 SUPPORT")
 
-    # ক্যানসেল কমান্ড
     if text == "/cancel":
         context.user_data.clear()
         await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
-    # মেসেজ এডিটের ইনপুট
     if user.id == admin_id and state == "waiting_new_msg_text":
         key = context.user_data.get("editing_msg_key")
         if text:
@@ -846,7 +1019,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ সফল হয়েছে! '{MESSAGE_NAMES.get(key)}' মেসেজটি সেভ হয়েছে।")
         return
 
-    # বাটন নাম এডিটের ইনপুট
     if user.id == admin_id and state == "waiting_new_button_title":
         btn_key = context.user_data.get("editing_btn_key")
         if text:
@@ -855,7 +1027,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}")
         return
 
-    # বাটন ক্লিক
     if text == btn_sell:
         count = get_today_file_count(user.id)
         if count >= DAILY_FILE_LIMIT:
@@ -867,7 +1038,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"{sell_msg}\n\n"
             f"📊 আজকের সাবমিশন: {count}/{DAILY_FILE_LIMIT}\n"
-            f"💰 প্রতি ফাইল রিওয়ার্ড: ৳{REWARD_PER_FILE} BDT"
+            f"💰 প্রতি ভ্যালিড জিমেইল রেট: ৳{REWARD_PER_EMAIL:.2f} BDT"
         )
         return
 
@@ -1069,41 +1240,59 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await tg_file.download_to_drive(local_path)
 
         try:
-            total, valid_count, samples = validate_gmail_file(local_path)
+            valid_emails = validate_gmail_file(local_path)
         except Exception as e:
             if os.path.exists(local_path):
                 os.remove(local_path)
-            await update.message.reply_text(f"❌ ফাইল এরর: {e}")
+            await update.message.reply_text(f"❌ ফাইল পড়তে সমস্যা হয়েছে: {e}")
             return
 
         if os.path.exists(local_path):
             os.remove(local_path)
 
-        if valid_count == 0:
+        if not valid_emails:
             await update.message.reply_text("❌ কোনো ভ্যালিড @gmail.com পাওয়া যায়নি!")
             return
 
+        if len(valid_emails) > MAX_EMAILS_PER_FILE:
+            await update.message.reply_text(
+                f"❌ ফাইলে {len(valid_emails)}টি জিমেইল রয়েছে।\n"
+                f"একটি ফাইলে সর্বোচ্চ {MAX_EMAILS_PER_FILE}টি জিমেইল দেওয়া অনুমোদিত।"
+            )
+            return
+
+        emails_json = json.dumps(valid_emails)
         db_execute("""
-            INSERT INTO submissions (user_id, file_id, valid_emails, status, created_at)
+            INSERT INTO submissions (user_id, file_id, emails_json, status, created_at)
             VALUES (?, ?, ?, 'pending', ?)
-        """, (user.id, doc.file_id, valid_count, datetime.now().isoformat()))
+        """, (user.id, doc.file_id, emails_json, datetime.now().isoformat()))
 
         sub_id = db_execute("SELECT last_insert_rowid() AS id", fetchone=True)["id"]
         increase_file_count(user.id)
         context.user_data.clear()
 
-        await update.message.reply_text(f"✅ ফাইল জমা হয়েছে!\nভ্যালিড জিমেইল: {valid_count} টি।\nঅনুমোদনের পর ৳{REWARD_PER_FILE} যোগ হবে।")
+        await update.message.reply_text(
+            f"✅ ফাইল সফলভাবে জমা হয়েছে!\n\n"
+            f"🔍 মোট ভ্যালিড Gmail: {len(valid_emails)} টি।\n"
+            f"⏳ সর্বোচ্চ ২৪ থেকে ৪৮ ঘণ্টার মধ্যে রিসিভ করা হবে। রিসিভ হওয়ার পর প্রতি ভ্যালিড অ্যাকাউন্টে ৳{REWARD_PER_EMAIL:.2f} করে যোগ হবে।"
+        )
 
         if admin_id:
-            s_str = "\n".join(samples)
+            mail_preview = "\n".join([f"{i+1}. {m}" for i, m in enumerate(valid_emails)])
             admin_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Approve", callback_data=f"approve_sub:{sub_id}"),
-                 InlineKeyboardButton("❌ Reject", callback_data=f"reject_sub:{sub_id}")]
+                [InlineKeyboardButton("📥 রিসিভ (Select Accounts)", callback_data=f"sub_open:{sub_id}")],
+                [InlineKeyboardButton("✅ সব রিসিভ (All Accept)", callback_data=f"sub_accept_all:{sub_id}"),
+                 InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_reject_all:{sub_id}")]
             ])
             await context.bot.send_document(
                 chat_id=admin_id,
                 document=doc.file_id,
-                caption=f"📁 নতুন জিমেইল ফাইল (#{sub_id})\nইউজার: {user.id}\nভ্যালিড: {valid_count}\nনমুনা:\n{s_str}",
+                caption=(
+                    f"📁 নতুন জিমেইল সাবমিশন (#{sub_id})\n"
+                    f"👤 ইউজার: {user.id}\n"
+                    f"✉️ জিমেইল সংখ্যা: {len(valid_emails)} টি\n\n"
+                    f"📋 তালিকা:\n{mail_preview}"
+                ),
                 reply_markup=admin_kb
             )
         return
