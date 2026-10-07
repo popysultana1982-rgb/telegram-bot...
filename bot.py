@@ -5,7 +5,7 @@ import re
 import shutil
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import openpyxl
@@ -41,6 +41,7 @@ WITHDRAW_FEE_PERCENT = 4
 REWARD_PER_EMAIL = 25.0  # প্রতি ভ্যালিড জিমেইলে ২৫ টাকা
 DAILY_FILE_LIMIT = 5
 MAX_EMAILS_PER_FILE = 5
+DUPLICATE_CHECK_DAYS = 3  # একবার দেওয়া জিমেইল ৩ দিন পর্যন্ত আর জমা দেওয়া যাবে না
 
 REFERRAL_BONUS = 5.0
 USDT_RATE = 124.0
@@ -50,7 +51,7 @@ PORT = int(os.environ.get("PORT", 10000))
 
 
 # =========================================================
-# RENDER WEB SERVER (FIXED FOR UPTIMEROBOT HEAD REQUESTS)
+# RENDER WEB SERVER
 # =========================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -62,7 +63,6 @@ class HealthHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
         self.end_headers()
 
     def log_message(self, format, *args):
@@ -71,7 +71,6 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 def run_web_server():
     server = ThreadingHTTPServer(("0.0.0.0", PORT), HealthHandler)
-    print(f"Web server running on port {PORT}")
     server.serve_forever()
 
 
@@ -138,8 +137,16 @@ def init_db():
             in_review_json TEXT DEFAULT '[]',
             accepted_count INTEGER DEFAULT 0,
             rejected_count INTEGER DEFAULT 0,
-            status TEXT DEFAULT 'pending', -- pending -> stage2_review -> completed / rejected
+            status TEXT DEFAULT 'pending',
             created_at TEXT
+        )
+    """)
+
+    # ডুপ্লিকেট রোধের জন্য পৃথক টেবিল
+    db_execute("""
+        CREATE TABLE IF NOT EXISTS submitted_emails (
+            email TEXT,
+            submitted_at TEXT
         )
     """)
 
@@ -149,6 +156,23 @@ def init_db():
             value TEXT
         )
     """)
+
+
+# =========================================================
+# EXCEL GENERATOR HELPER
+# =========================================================
+
+def create_rejected_excel(emails, title="Rejected Emails"):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Rejected"
+    ws.append(["Index", "Rejected Gmail Account", "Reason"])
+    for i, em in enumerate(emails, 1):
+        ws.append([i, em, "Login issue or invalid on check"])
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio
 
 
 # =========================================================
@@ -164,13 +188,13 @@ DEFAULT_MESSAGES = {
         "🔹 ধাপ ১: ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক রিসিভ করবেন এবং যে জিমেইলগুলো লগইন করা যায় সেগুলো পর্যালোচনায় রাখবেন। যেগুলোতে লগইন সমস্যা থাকবে সেগুলো ১ম ধাপেই বাতিল ও ফেরত দেওয়া হবে।\n"
         "🔹 ধাপ ২: পর্যালোচনায় রাখা জিমেইলগুলো পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে। এই সময়ে ব্যালেন্স যোগ হবে না।\n"
         "🔹 ধাপ ৩: ২৪ থেকে ৪৮ ঘণ্টা পর যে জিমেইলগুলো ঠিক থাকবে, সেগুলোর প্রতিটির জন্য ৳২৫ টাকা আপনার Balance-এ যোগ হয়ে যাবে! 💰\n"
-        "🔹 আর শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে ফেরত দেওয়া হবে।\n\n"
-        "⚠️ প্রতিদিন সর্বোচ্চ ৫টি ফাইল এবং প্রতি ফাইলে সর্বোচ্চ ৫টি ভ্যালিড Gmail দিতে পারবেন।"
+        "🔹 আর শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n\n"
+        "⚠️ প্রতিদিন সর্বোচ্চ ৫টি ফাইল এবং প্রতি ফাইলে সর্বোচ্চ ৫টি ভ্যালিড Gmail দিতে পারবেন। একবার সাবমিট করা জিমেইল আগামী ৩ দিনের মধ্যে পুনরায় দেওয়া যাবে না।"
     ),
     "sell": (
         "📤 আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।\n\n"
         "💰 প্রতি ভ্যালিড জিমেইল রেট: ৳২৫ BDT\n"
-        "⚠️ সতর্কতা: এক ফাইলে সর্বোচ্চ ৫টি @gmail.com থাকতে হবে। অন্য কোনো মেইল গ্রহণযোগ্য নয়।"
+        "⚠️ এক ফাইলে সর্বোচ্চ ৫টি @gmail.com থাকতে হবে। বিগত ৩ দিনের মধ্যে জমা দেওয়া কোনো মেইল গ্রহণ করা হবে না।"
     ),
     "support": "যে কোনো সমস্যা বা সহযোগিতার জন্য সরাসরি সাপোর্টে যোগাযোগ করুন:",
     "maintenance": (
@@ -323,7 +347,7 @@ def increase_file_count(user_id):
 
 
 # =========================================================
-# VALIDATIONS (BD PHONE, BINANCE UID & STRICT GMAIL)
+# VALIDATIONS (DUPLICATES, PHONE, BINANCE & GMAIL)
 # =========================================================
 
 BD_PHONE_REGEX = re.compile(r"^01[3-9]\d{8}$")
@@ -348,13 +372,36 @@ def validate_gmail_file(file_path):
                 if cell:
                     raw_entries.append(str(cell).strip())
 
-    valid_gmails = [m for m in raw_entries if GMAIL_REGEX.match(m)]
+    valid_gmails = [m.lower() for m in raw_entries if GMAIL_REGEX.match(m)]
     unique_gmails = []
     for g in valid_gmails:
         if g not in unique_gmails:
             unique_gmails.append(g)
 
     return unique_gmails
+
+
+def check_recent_duplicate_emails(emails):
+    """বিগত ৩ দিনের মধ্যে এই জিমেইলগুলো জমা দেওয়া হয়েছিল কি না চেক করে"""
+    cutoff_date = (datetime.now() - timedelta(days=DUPLICATE_CHECK_DAYS)).isoformat()
+    placeholders = ",".join(["?"] * len(emails))
+    query = f"""
+        SELECT email FROM submitted_emails 
+        WHERE email IN ({placeholders}) AND submitted_at >= ?
+    """
+    params = list(emails) + [cutoff_date]
+    rows = db_execute(query, params, fetchall=True)
+    if rows:
+        return [r["email"] for r in rows]
+    return []
+
+
+def save_submitted_emails(emails):
+    """নতুন জিমেইলগুলো ডুপ্লিকেট চেকারের টেবিলে সেভ করে"""
+    now_str = datetime.now().isoformat()
+    cur = db.cursor()
+    cur.executemany("INSERT INTO submitted_emails (email, submitted_at) VALUES (?, ?)", [(e, now_str) for e in emails])
+    db.commit()
 
 
 # =========================================================
@@ -762,7 +809,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # -------------------------------------------------------------
-    # অ্যাডমিন ফাইল হিস্ট্রি ও এক্সেল ডাউনলোড
+    # অ্যাডমিন ফাইল হিস্ট্রি, এক্সেল ডাউনলোড ও ডিলিট
     # -------------------------------------------------------------
     elif data.startswith("admin_file_history:"):
         if user_id != admin_id:
@@ -829,9 +876,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         action_kb = [
             [InlineKeyboardButton("📥 ডাউনলোড এক্সেল ফাইল (.xlsx)", callback_data=f"adm_dl_excel:{sub_id}")],
+            [InlineKeyboardButton("🗑 এই ফাইলটি ডিলিট করুন", callback_data=f"adm_del_sub:{sub_id}")],
             [InlineKeyboardButton("⬅️ ফাইল তালিকায় ফিরুন", callback_data="admin_file_history:0")]
         ]
         await query.edit_message_text(info_text, reply_markup=InlineKeyboardMarkup(action_kb), parse_mode="Markdown")
+
+    elif data.startswith("adm_del_sub:"):
+        if user_id != admin_id:
+            return
+        sub_id = int(data.split(":")[1])
+        db_execute("DELETE FROM submissions WHERE id=?", (sub_id,))
+        await query.answer("ফাইলটি সফলভাবে ডিলিট করা হয়েছে!", show_alert=True)
+        query.data = "admin_file_history:0"
+        await button_handler(update, context)
 
     elif data.startswith("adm_dl_excel:"):
         if user_id != admin_id:
@@ -864,7 +921,74 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("এক্সেল ফাইল পাঠানো হয়েছে!")
 
     # -------------------------------------------------------------
-    # ধাপ ১: প্রাথমিক রিসিভ ও সিলেকশন (INITIAL RECEIVE)
+    # ইউজার হিস্ট্রি (লাইভ ও সম্পূর্ণ হিস্ট্রি বাটন)
+    # -------------------------------------------------------------
+    elif data == "user_hist_live":
+        subs = db_execute(
+            "SELECT * FROM submissions WHERE user_id=? AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
+            (user_id,), 
+            fetchall=True
+        )
+        if not subs:
+            back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
+            await query.edit_message_text("⏳ **বর্তমানে আপনার কোনো ফাইল প্রসেসিং বা পর্যবেক্ষণে নেই।**\n\nনতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখা যাবে।", reply_markup=back_kb, parse_mode="Markdown")
+            return
+
+        hist_msg = "⏳ **আপনার লাইভ ও চলমান ফাইলগুলোর স্ট্যাটাস:**\n\n"
+        for s in subs:
+            emails = json.loads(s["emails_json"])
+            if s["status"] == "pending":
+                st_text = "🟡 নতুন জমা (অ্যাডমিন পর্যালোচনার অপেক্ষায়)"
+            else:
+                review_count = len(json.loads(s["in_review_json"])) if s["in_review_json"] else 0
+                st_text = f"🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে রয়েছে ({review_count}টি জিমেইল)"
+
+            hist_msg += (
+                f"📁 **ফাইল ID: #{s['id']}**\n"
+                f"📅 তারিখ: {s['created_at'][:10]}\n"
+                f"✉️ মোট জিমেইল: {len(emails)} টি\n"
+                f"⚡ স্ট্যাটাস: {st_text}\n"
+                f"-----------------------------\n"
+            )
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
+        await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
+
+    elif data == "user_hist_all":
+        subs = db_execute("SELECT * FROM submissions WHERE user_id=? ORDER BY id DESC LIMIT 15", (user_id,), fetchall=True)
+        if not subs:
+            back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
+            await query.edit_message_text("📜 আপনি এখনও কোনো ফাইল সাবমিট করেননি।", reply_markup=back_kb)
+            return
+
+        hist_msg = "📜 **আপনার অতীতের সকল সাবমিশন হিস্ট্রি (সর্বশেষ ১৫টি):**\n\n"
+        for s in subs:
+            emails = json.loads(s["emails_json"])
+            if s["status"] == "pending":
+                st_text = "🟡 নতুন জমা (পর্যালোচনার অপেক্ষায়)"
+            elif s["status"] == "stage2_review":
+                st_text = "🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে"
+            elif s["status"] == "completed":
+                st_text = f"🟢 সম্পন্ন (অনুমোদিত: {s['accepted_count']}টি | বাতিল: {s['rejected_count']}টি)"
+            else:
+                st_text = f"🔴 সম্পূর্ণ বাতিল ({s['rejected_count']}টি নষ্ট)"
+
+            hist_msg += (
+                f"📁 **ফাইল ID: #{s['id']}** | {s['created_at'][:10]}\n"
+                f"✉️ মোট: {len(emails)}টি | ফলাফল: {st_text}\n"
+                f"-----------------------------\n"
+            )
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
+        await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
+
+    elif data == "user_hist_menu":
+        hist_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
+            [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")]
+        ])
+        await query.edit_message_text("📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\nনিচের যেকোনো অপশনে ক্লিক করে বিস্তারিত দেখুন:", reply_markup=hist_kb, parse_mode="Markdown")
+
+    # -------------------------------------------------------------
+    # ধাপ ১: প্রাথমিক রিসিভ ও সিলেকশন
     # -------------------------------------------------------------
     elif data.startswith("sub_s1_open:"):
         if user_id != admin_id:
@@ -979,21 +1103,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+        # বাতিল হওয়া জিমেইলগুলো এক্সেল ফাইল (.xlsx) আকারে ফেরত পাঠানো
         if s1_rejected:
-            rej_content = "লগইন সমস্যা থাকায় বাতিল হওয়া জিমেইল তালিকা:\n" + "\n".join(s1_rejected)
-            bio = io.BytesIO(rej_content.encode('utf-8'))
-            bio.name = f"stage1_rejected_{sub_id}.txt"
+            bio = create_rejected_excel(s1_rejected)
+            bio.name = f"rejected_stage1_{sub_id}.xlsx"
             try:
                 await context.bot.send_document(
                     chat_id=sub["user_id"],
                     document=bio,
-                    caption=f"⚠️ {len(s1_rejected)}টি জিমেইলে লগইন সমস্যা থাকায় ফেরত দেওয়া হলো।"
+                    caption=f"⚠️ {len(s1_rejected)}টি জিমেইলে লগইন সমস্যা থাকায় এক্সেল ফাইলে ফেরত দেওয়া হলো।"
                 )
             except Exception:
                 pass
 
     # -------------------------------------------------------------
-    # ধাপ ৩: চূড়ান্ত অনুমোদন ও ক্লোজ (FINAL APPROVE)
+    # ধাপ ৩: চূড়ান্ত অনুমোদন ও ক্লোজ
     # -------------------------------------------------------------
     elif data.startswith("sub_s3_open:"):
         if user_id != admin_id:
@@ -1072,15 +1196,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+        # ধাপ ৩-এ নষ্ট হওয়া জিমেইলগুলো এক্সেল ফাইল (.xlsx) আকারে ফেরত পাঠানো
         if final_rejected:
-            rej_content = "পর্যবেক্ষণে নষ্ট হওয়া জিমেইল তালিকা:\n" + "\n".join(final_rejected)
-            bio = io.BytesIO(rej_content.encode('utf-8'))
-            bio.name = f"stage3_rejected_{sub_id}.txt"
+            bio = create_rejected_excel(final_rejected)
+            bio.name = f"rejected_stage3_{sub_id}.xlsx"
             try:
                 await context.bot.send_document(
                     chat_id=sub["user_id"],
                     document=bio,
-                    caption=f"⚠️ {len(final_rejected)}টি জিমেইল নষ্ট হওয়ায় ফেরত দেওয়া হলো।"
+                    caption=f"⚠️ {len(final_rejected)}টি জিমেইল নষ্ট হওয়ায় এক্সেল ফাইলে ফেরত দেওয়া হলো।"
                 )
             except Exception:
                 pass
@@ -1125,14 +1249,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_caption(caption=f"❌ পর্যবেক্ষণে থাকা সবকটি ({len(review_emails)}টি) জিমেইল নষ্ট হওয়ায় বাতিল।")
 
-        rej_content = "নষ্ট হওয়া জিমেইল তালিকা:\n" + "\n".join(review_emails)
-        bio = io.BytesIO(rej_content.encode('utf-8'))
-        bio.name = f"rejected_all_sub_{sub_id}.txt"
+        bio = create_rejected_excel(review_emails)
+        bio.name = f"rejected_all_stage3_{sub_id}.xlsx"
         try:
             await context.bot.send_document(
                 chat_id=sub["user_id"],
                 document=bio,
-                caption="❌ পর্যবেক্ষণে আপনার সবগুলো জিমেইল নষ্ট হওয়ায় বাতিল ও ফেরত দেওয়া হলো।"
+                caption="❌ পর্যবেক্ষণে আপনার সবগুলো জিমেইল নষ্ট হওয়ায় এক্সেল ফাইলে ফেরত দেওয়া হলো।"
             )
         except Exception:
             pass
@@ -1149,10 +1272,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_execute("UPDATE submissions SET status='rejected', accepted_count=0, rejected_count=? WHERE id=?", (len(emails), sub_id))
 
         await query.edit_message_caption(caption=f"❌ পুরো ফাইল ({len(emails)}টি জিমেইল) বাতিল করা হয়েছে।")
-        bio = io.BytesIO(("সম্পূর্ণ বাতিলকৃত জিমেইল:\n" + "\n".join(emails)).encode('utf-8'))
-        bio.name = f"all_rejected_{sub_id}.txt"
+        bio = create_rejected_excel(emails)
+        bio.name = f"all_rejected_{sub_id}.xlsx"
         try:
-            await context.bot.send_document(chat_id=sub["user_id"], document=bio, caption="❌ আপনার ফাইলের সবগুলো জিমেইল বাতিল করা হয়েছে।")
+            await context.bot.send_document(chat_id=sub["user_id"], document=bio, caption="❌ আপনার ফাইলের সবগুলো জিমেইল বাতিল করে এক্সেল ফাইলে ফেরত দেওয়া হলো।")
         except Exception:
             pass
 
@@ -1254,39 +1377,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}")
         return
 
-    # ইউজার হিস্ট্রি বাটন (শুধুমাত্র চলমান ফাইল দেখাবে)
+    # ইউজার হিস্ট্রি মেনু বাটন
     if text == btn_hist:
-        subs = db_execute(
-            "SELECT * FROM submissions WHERE user_id=? AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
-            (user.id,), 
-            fetchall=True
+        hist_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
+            [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")]
+        ])
+        await update.message.reply_text(
+            "📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\n"
+            "🔹 **লাইভ চলমান সাবমিশন:** বর্তমানে রিভিউ বা ২৪-৪৮ ঘণ্টা পর্যালোচনায় থাকা ফাইল দেখতে পাবেন।\n"
+            "🔹 **সকল সাবমিশন হিস্ট্রি:** শুরু থেকে আপনার জমা দেওয়া সকল ফাইলের ফলাফল দেখতে পাবেন।",
+            reply_markup=hist_kb,
+            parse_mode="Markdown"
         )
-        
-        if not subs:
-            await update.message.reply_text(
-                "📜 **বর্তমানে আপনার কোনো ফাইল প্রসেসিংয়ে নেই।**\n\n"
-                "নতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখতে পাবেন।"
-            )
-            return
-
-        hist_msg = "📋 **আপনার চলমান ফাইল সাবমিশন স্ট্যাটাস:**\n\n"
-        for s in subs:
-            emails = json.loads(s["emails_json"])
-            st_text = ""
-            if s["status"] == "pending":
-                st_text = "🟡 নতুন জমা (অ্যাডমিন পর্যালোচনার অপেক্ষায়)"
-            elif s["status"] == "stage2_review":
-                review_count = len(json.loads(s["in_review_json"])) if s["in_review_json"] else 0
-                st_text = f"🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে রয়েছে ({review_count}টি জিমেইল)"
-
-            hist_msg += (
-                f"📁 **ফাইল ID: #{s['id']}**\n"
-                f"📅 তারিখ: {s['created_at'][:10]}\n"
-                f"✉️ মোট জিমেইল: {len(emails)} টি\n"
-                f"⚡ স্ট্যাটাস: {st_text}\n"
-                f"-----------------------------\n"
-            )
-        await update.message.reply_text(hist_msg, parse_mode="Markdown")
         return
 
     if text == btn_sell:
@@ -1523,6 +1626,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"একটি ফাইলে সর্বোচ্চ {MAX_EMAILS_PER_FILE}টি জিমেইল দেওয়া অনুমোদিত।"
             )
             return
+
+        # ডুপ্লিকেট জিমেইল চেক (বিগত ৩ দিনের মধ্যে এসেছে কি না)
+        duplicates = check_recent_duplicate_emails(valid_emails)
+        if duplicates:
+            dup_list = "\n".join([f"• {d}" for d in duplicates])
+            await update.message.reply_text(
+                f"❌ **ফাইল গ্রহণ করা হয়নি!**\n\n"
+                f"নিচের জিমেইলগুলো বিগত ৩ দিনের মধ্যে জমা দেওয়া হয়েছিল:\n{dup_list}\n\n"
+                f"⚠️ একবার জমা দেওয়া জিমেইল ৩ দিন অতিবাহিত না হওয়া পর্যন্ত আর সাবমিট করা যাবে না।"
+            )
+            return
+
+        # নতুন জিমেইলগুলো ডাটাবেজে সংরক্ষণ
+        save_submitted_emails(valid_emails)
 
         emails_json = json.dumps(valid_emails)
         db_execute("""
