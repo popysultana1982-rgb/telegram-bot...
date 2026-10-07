@@ -141,8 +141,51 @@ def init_db():
 
 
 # =========================================================
-# ADMIN & SYSTEM HELPERS
+# SYSTEM & MESSAGE HELPERS
 # =========================================================
+
+DEFAULT_MESSAGES = {
+    "rules": (
+        "আসসালামু আলাইকুম, {name}! 🌸\n\n"
+        "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
+        "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করতে পারবেন।\n\n"
+        "📌 গুরুত্বপূর্ণ নিয়মাবলি:\n"
+        "🔹 প্রতিদিন সর্বোচ্চ ৫টি Gmail Account সাবমিট করতে পারবেন।\n"
+        "🔹 প্রতিটি Gmail অবশ্যই Valid এবং ব্যবহারযোগ্য হতে হবে।\n"
+        "🔹 Gmail সাবমিট করার পর সর্বোচ্চ ২৪ ঘণ্টার মধ্যে আপনার Gmail রিসিভ করা হবে।\n"
+        "🔹 Gmail রিসিভ হওয়ার পর অ্যাডমিন আপনাকে মেসেজের মাধ্যমে জানিয়ে দেবে।\n"
+        "🔹 রিসিভ করার সময় থেকে পরবর্তী ২৪ ঘণ্টা Gmail-এর স্ট্যাটাস পর্যবেক্ষণ করা হবে।\n"
+        "🔹 ২৪ ঘণ্টা পর যে Gmail Accountগুলো ঠিক থাকবে, সেগুলোর টাকা Balance-এ যোগ হয়ে যাবে। 💰\n"
+        "🔹 আর নষ্ট হওয়া Gmailগুলোর টাকা যোগ হবে না এবং অ্যাকাউন্টগুলো ফেরত দেওয়া হবে।\n\n"
+        "⚠️ দয়া করে শুধু Valid Gmail Account সাবমিট করুন।\n"
+        "💚 ধন্যবাদ আমাদের সাথে থাকার জন্য।"
+    ),
+    "sell": (
+        "📤 আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।\n\n"
+        "⚠️ সতর্কতা: শুধুমাত্র @gmail.com ফরম্যাটের মেইল গ্রহণ করা হবে। অন্য কোনো মেইল গ্রহণযোগ্য নয়।"
+    ),
+    "support": "যে কোনো সমস্যা বা সহযোগিতার জন্য সরাসরি সাপোর্টে যোগাযোগ করুন:",
+    "maintenance": (
+        "⚠️ **বট আপডেটের কাজ চলছে!** 🛠\n\n"
+        "সম্মানিত ইউজার, আমাদের সিস্টেমে জরুরি আপডেটের কাজ চলছে। "
+        "সাময়িকভাবে বটের কার্যক্রম স্থগিত রয়েছে। কাজ সম্পন্ন হওয়ামাত্রই বট পুনরায় চালু হবে।"
+    ),
+    "referral": (
+        "👥 রেফার করে ইনকাম করুন!\n\n"
+        "প্রতি সফল রেফারে আপনি পাবেন ৳{bonus} BDT বোনাস।\n"
+        "আপনার রেফারেল লিংকটি শেয়ার করুন:\n\n"
+        "🔗 `{link}`"
+    )
+}
+
+MESSAGE_NAMES = {
+    "rules": "📜 Rules & Welcome",
+    "sell": "📤 Sell Gmail Instruction",
+    "referral": "👥 Referral Message",
+    "support": "📞 Support Text",
+    "maintenance": "🛠 Maintenance Notice"
+}
+
 
 def get_admin_id():
     res = db_execute("SELECT value FROM settings WHERE key='admin_id'", fetchone=True)
@@ -176,6 +219,24 @@ def toggle_maintenance_mode():
     return new_val == "1"
 
 
+def get_custom_msg(key):
+    res = db_execute("SELECT value FROM settings WHERE key=?", (f"msg_{key}",), fetchone=True)
+    if res and res["value"]:
+        return res["value"]
+    return DEFAULT_MESSAGES.get(key, "")
+
+
+def set_custom_msg(key, text):
+    db_execute("""
+        INSERT INTO settings (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value
+    """, (f"msg_{key}", text))
+
+
+def delete_custom_msg(key):
+    db_execute("DELETE FROM settings WHERE key=?", (f"msg_{key}",))
+
+
 def get_button_title(btn_key, default_title):
     res = db_execute("SELECT value FROM settings WHERE key=?", (f"btn_{btn_key}",), fetchone=True)
     return res["value"] if res else default_title
@@ -186,18 +247,6 @@ def set_button_title(btn_key, new_title):
         INSERT INTO settings (key, value) VALUES (?, ?)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value
     """, (f"btn_{btn_key}", new_title))
-
-
-def get_custom_message(msg_key, default_text):
-    res = db_execute("SELECT value FROM settings WHERE key=?", (f"msg_{msg_key}",), fetchone=True)
-    return res["value"] if res else default_text
-
-
-def set_custom_message(msg_key, text):
-    db_execute("""
-        INSERT INTO settings (key, value) VALUES (?, ?)
-        ON CONFLICT(key) DO UPDATE SET value=excluded.value
-    """, (f"msg_{msg_key}", text))
 
 
 def clear_junk_cache():
@@ -297,38 +346,8 @@ def validate_gmail_file(file_path):
 
 
 # =========================================================
-# DEFAULT MESSAGES & TEMPLATES
+# KEYBOARD & MENUS
 # =========================================================
-
-DEFAULT_RULES = (
-    "আসসালামু আলাইকুম, {name}! 🌸\n\n"
-    "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
-    "আপনি আমাদের বটে নতুন এসেছেন। এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করতে পারবেন।\n\n"
-    "📌 গুরুত্বপূর্ণ নিয়মাবলি:\n"
-    "🔹 প্রতিদিন সর্বোচ্চ ৫টি Gmail Account সাবমিট করতে পারবেন।\n"
-    "🔹 প্রতিটি Gmail অবশ্যই Valid এবং ব্যবহারযোগ্য হতে হবে।\n"
-    "🔹 Gmail সাবমিট করার পর সর্বোচ্চ ২৪ ঘণ্টার মধ্যে আপনার Gmail রিসিভ করা হবে।\n"
-    "🔹 Gmail রিসিভ হওয়ার পর অ্যাডমিন আপনাকে মেসেজের মাধ্যমে জানিয়ে দেবে যে আপনার Gmail রিসিভ হয়েছে।\n"
-    "🔹 অ্যাডমিন রিসিভ করার সময় থেকে পরবর্তী ২৪ ঘণ্টা Gmail-এর স্ট্যাটাস পর্যবেক্ষণ করা হবে।\n"
-    "🔹 ২৪ ঘণ্টা পর যে Gmail Accountগুলো ঠিক থাকবে/নষ্ট হবে না, সেই Gmailগুলোর টাকা আপনার Balance-এ অটোমেটিক যোগ হয়ে যাবে। 💰\n"
-    "🔹 আর যে Gmail Accountগুলো নষ্ট হয়ে যাবে, সেগুলোর জন্য টাকা যোগ হবে না এবং সেই Gmail Accountগুলো আপনাকে ফেরত দেওয়া হবে।\n\n"
-    "⚠️ দয়া করে শুধু Valid Gmail Account সাবমিট করুন এবং উপরের নিয়মগুলো মেনে চলুন।\n\n"
-    "💚 ধন্যবাদ আমাদের সাথে থাকার জন্য।\n"
-    "সুন্দর ও নিরাপদ লেনদেনের শুভকামনা!"
-)
-
-DEFAULT_SUPPORT = "যে কোনো সমস্যা বা সহযোগিতার জন্য সরাসরি সাপোর্টে যোগাযোগ করুন:"
-DEFAULT_MAINTENANCE = (
-    "⚠️ **বট আপডেটের কাজ চলছে!** 🛠\n\n"
-    "সম্মানিত ইউজার, আমাদের সিস্টেমে জরুরি আপডেটের কাজ চলছে। "
-    "সাময়িকভাবে বটের কার্যক্রম স্থগিত রয়েছে। কাজ সম্পন্ন হওয়ামাত্রই বট পুনরায় চালু হবে।"
-)
-
-
-def get_rules_text(user_name):
-    template = get_custom_message("rules_welcome", DEFAULT_RULES)
-    return template.replace("{name}", user_name)
-
 
 def get_bottom_keyboard():
     btn_sell = get_button_title("sell", "📤 SELL FRESH GMAIL ACCOUNT")
@@ -354,7 +373,7 @@ async def show_main_menu(update, context):
     balance_usdt = balance_bdt / USDT_RATE
 
     name = user.first_name or "User"
-    welcome_msg = get_rules_text(name)
+    welcome_msg = get_custom_msg("rules").replace("{name}", name)
 
     balance_text = (
         f"\n\n═══════════════════\n"
@@ -392,8 +411,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = get_admin_id()
 
     if is_maintenance_mode() and user.id != admin_id:
-        m_msg = get_custom_message("maintenance_text", DEFAULT_MAINTENANCE)
-        await update.message.reply_text(m_msg)
+        await update.message.reply_text(get_custom_msg("maintenance"))
         return
 
     context.user_data.clear()
@@ -435,141 +453,97 @@ async def set_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ব্যবহার নিয়ম: `/setadmin <secret_key>`")
         return
 
-    provided_key = context.args[0]
-    if provided_key == ADMIN_SECRET_KEY:
+    if context.args[0] == ADMIN_SECRET_KEY:
         set_admin_id(user_id)
-        await update.message.reply_text(
-            f"✅ সফল হয়েছে! আপনার আইডি ({user_id}) এখন অ্যাডমিন হিসেবে সেট করা হয়েছে।\nএখন /admin লিখে প্যানেল ওপেন করুন।"
-        )
+        await update.message.reply_text(f"✅ আপনার আইডি ({user_id}) অ্যাডমিন হিসেবে সেট করা হয়েছে।\n/admin লিখে প্যানেল খুলুন।")
     else:
-        await update.message.reply_text("❌ গোপন পাসওয়ার্ড ভুল!")
+        await update.message.reply_text("❌ পাসওয়ার্ড ভুল!")
 
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = get_admin_id()
     if not admin_id or update.effective_user.id != admin_id:
-        await update.message.reply_text("❌ You are not authorized.\nপ্রথমে নিজেকে অ্যাডমিন করতে `/setadmin <key>` পাঠান।")
+        await update.message.reply_text("❌ আপনি অ্যাডমিন নন। প্রথমে `/setadmin <key>` কমান্ড পাঠান।")
         return
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("👨‍💼 Open Admin Panel", callback_data="admin_panel")]
     ])
-    await update.message.reply_text("🔐 Admin access granted.", reply_markup=keyboard)
+    await update.message.reply_text("🔐 Admin Access Granted.", reply_markup=keyboard)
 
 
 async def add_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    admin_id = get_admin_id()
-    if update.effective_user.id != admin_id:
-        await update.message.reply_text("❌ You are not authorized.")
+    if update.effective_user.id != get_admin_id():
         return
-
     if len(context.args) < 2:
         await update.message.reply_text("ব্যবহার নিয়ম: `/addbalance <user_id> <amount>`")
         return
-
     try:
-        target_user_id = int(context.args[0])
-        amount = float(context.args[1])
+        t_id, amt = int(context.args[0]), float(context.args[1])
     except ValueError:
         await update.message.reply_text("❌ সংখ্যায় আইডি ও টাকার পরিমাণ দিন।")
         return
 
-    user = get_user(target_user_id)
-    if not user:
-        await update.message.reply_text("❌ এই আইডির কোনো ইউজার নেই।")
+    if not get_user(t_id):
+        await update.message.reply_text("❌ ইউজার পাওয়া যায়নি।")
         return
 
-    update_balance(target_user_id, amount)
-    new_bdt = get_balance(target_user_id)
-    new_usdt = new_bdt / USDT_RATE
-
-    await update.message.reply_text(
-        f"✅ ব্যালেন্স যোগ হয়েছে!\n👤 ইউজার: {target_user_id}\n➕ যোগ: ৳{amount:.2f} BDT\n💰 মোট: ৳{new_bdt:.2f} BDT (${new_usdt:.2f} USDT)"
-    )
-
+    update_balance(t_id, amt)
+    new_bdt = get_balance(t_id)
+    await update.message.reply_text(f"✅ ব্যালেন্স যোগ হয়েছে! ইউজার: {t_id}, বর্তমান ব্যালেন্স: ৳{new_bdt:.2f}")
     try:
-        await context.bot.send_message(
-            chat_id=target_user_id,
-            text=f"🎁 আপনার অ্যাকাউন্টে ৳{amount:.2f} BDT যোগ করা হয়েছে!\nআপনার বর্তমান ব্যালেন্স: ৳{new_bdt:.2f} BDT (${new_usdt:.2f} USDT)"
-        )
+        await context.bot.send_message(chat_id=t_id, text=f"🎁 আপনার অ্যাকাউন্টে ৳{amt:.2f} BDT যোগ করা হয়েছে!")
     except Exception:
         pass
 
 
 async def cut_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    admin_id = get_admin_id()
-    if update.effective_user.id != admin_id:
-        await update.message.reply_text("❌ You are not authorized.")
+    if update.effective_user.id != get_admin_id():
         return
-
     if len(context.args) < 2:
         await update.message.reply_text("ব্যবহার নিয়ম: `/cutbalance <user_id> <amount>`")
         return
-
     try:
-        target_user_id = int(context.args[0])
-        amount = float(context.args[1])
+        t_id, amt = int(context.args[0]), float(context.args[1])
     except ValueError:
         await update.message.reply_text("❌ সংখ্যায় আইডি ও টাকার পরিমাণ দিন।")
         return
 
-    user = get_user(target_user_id)
-    if not user:
-        await update.message.reply_text("❌ এই আইডির কোনো ইউজার নেই।")
+    if not get_user(t_id):
+        await update.message.reply_text("❌ ইউজার পাওয়া যায়নি।")
         return
 
-    update_balance(target_user_id, -amount)
-    new_bdt = get_balance(target_user_id)
-    new_usdt = new_bdt / USDT_RATE
-
-    await update.message.reply_text(
-        f"✂️ ব্যালেন্স কেটে নেওয়া হয়েছে!\n👤 ইউজার: {target_user_id}\n➖ কাটা হয়েছে: ৳{amount:.2f} BDT\n💰 বর্তমান: ৳{new_bdt:.2f} BDT (${new_usdt:.2f} USDT)"
-    )
-
+    update_balance(t_id, -amt)
+    new_bdt = get_balance(t_id)
+    await update.message.reply_text(f"✂️ ব্যালেন্স কেটে নেওয়া হয়েছে! ইউজার: {t_id}, বর্তমান ব্যালেন্স: ৳{new_bdt:.2f}")
     try:
-        await context.bot.send_message(
-            chat_id=target_user_id,
-            text=f"⚠️ আপনার অ্যাকাউন্ট থেকে ৳{amount:.2f} BDT কেটে নেওয়া হয়েছে।\nবর্তমান ব্যালেন্স: ৳{new_bdt:.2f} BDT (${new_usdt:.2f} USDT)"
-        )
+        await context.bot.send_message(chat_id=t_id, text=f"⚠️ আপনার অ্যাকাউন্ট থেকে ৳{amt:.2f} BDT কেটে নেওয়া হয়েছে।")
     except Exception:
         pass
 
 
 async def reset_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    admin_id = get_admin_id()
-    if update.effective_user.id != admin_id:
-        await update.message.reply_text("❌ You are not authorized.")
+    if update.effective_user.id != get_admin_id():
         return
-
     if len(context.args) < 1:
         await update.message.reply_text("ব্যবহার নিয়ম: `/resetbalance <user_id>`")
         return
-
     try:
-        target_user_id = int(context.args[0])
+        t_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("❌ ইউজার আইডি সংখ্যায় হতে হবে।")
+        await update.message.reply_text("❌ সংখ্যায় আইডি দিন।")
         return
 
-    user = get_user(target_user_id)
-    if not user:
+    if not get_user(t_id):
         await update.message.reply_text("❌ ইউজার পাওয়া যায়নি।")
         return
 
-    db_execute("UPDATE users SET balance=0 WHERE user_id=?", (target_user_id,))
-    await update.message.reply_text(f"🔄 ব্যালেন্স রিসেট সফল হয়েছে!\n👤 ইউজার: {target_user_id}\n💰 বর্তমান: ৳0.00 BDT")
-
-    try:
-        await context.bot.send_message(
-            chat_id=target_user_id,
-            text="⚠️ আপনার অ্যাকাউন্টের ব্যালেন্স রিসেট করে ৳0.00 করা হয়েছে।"
-        )
-    except Exception:
-        pass
+    db_execute("UPDATE users SET balance=0 WHERE user_id=?", (t_id,))
+    await update.message.reply_text(f"🔄 ব্যালেন্স রিসেট সফল! ইউজার: {t_id}, ব্যালেন্স: ৳0.00")
 
 
 # =========================================================
-# ADMIN PANEL (WITH MESSAGES & BUTTONS EDIT)
+# ADMIN CONTROL PANEL
 # =========================================================
 
 async def show_admin_panel(query):
@@ -577,10 +551,10 @@ async def show_admin_panel(query):
 
     keyboard = [
         [InlineKeyboardButton(f"🛠 স্ট্যাটাস: {m_status}", callback_data="toggle_maintenance")],
-        [InlineKeyboardButton("📝 মেসেজ টেক্সট এডিট করুন", callback_data="admin_edit_messages_menu")],
-        [InlineKeyboardButton("✏️ মেনু বাটন নাম এডিট করুন", callback_data="admin_edit_buttons_menu")],
-        [InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ ও জ্যাঙ্ক ফাইলস", callback_data="admin_clear_cache")],
-        [InlineKeyboardButton("➕ নতুন লিংক বাটন যোগ", callback_data="admin_add_button"),
+        [InlineKeyboardButton("💬 বাটন মেসেজ কন্ট্রোল (Add/Edit/Delete)", callback_data="admin_messages_menu")],
+        [InlineKeyboardButton("✏️ মেনু বাটন নাম এডিট", callback_data="admin_edit_buttons_menu")],
+        [InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ / আবর্জনা মুছুন", callback_data="admin_clear_cache")],
+        [InlineKeyboardButton("➕ নতুন লিংক বাটন", callback_data="admin_add_button"),
          InlineKeyboardButton("🗑 লিংক বাটন মুছুন", callback_data="admin_remove_button")],
         [InlineKeyboardButton("📢 Broadcast Post", callback_data="admin_broadcast"),
          InlineKeyboardButton("✉️ Single Message", callback_data="admin_single_message")],
@@ -599,7 +573,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = query.from_user.id
     admin_id = get_admin_id()
-    add_user(query.from_user)
     data = query.data
 
     if data == "admin_panel":
@@ -614,7 +587,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id != admin_id:
             return
         new_state = toggle_maintenance_mode()
-        msg = "বট বন্ধ করা হয়েছে (ইউজারদের জন্য রক্ষণাবেক্ষণ মোড চালু)!" if new_state else "বট সফলভাবে সবার জন্য চালু করা হয়েছে!"
+        msg = "বট বন্ধ করা হয়েছে (ইউজাররা রক্ষণাবেক্ষণ নোটিশ পাবে)!" if new_state else "বট সফলভাবে চালু করা হয়েছে!"
         await query.answer(msg, show_alert=True)
         await show_admin_panel(query)
 
@@ -622,35 +595,66 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id != admin_id:
             return
         deleted = clear_junk_cache()
-        await query.answer(f"সফল হয়েছে! {deleted}টি টেম্প ফাইল মুছে ক্যাশ পরিষ্কার করা হয়েছে।", show_alert=True)
+        await query.answer(f"ক্যাশ ক্লিয়ার সম্পন্ন! {deleted}টি ফাইল মুছে ফেলা হয়েছে।", show_alert=True)
         await show_admin_panel(query)
 
-    # --- মেসেজ এডিট সাব-মেনু ---
-    elif data == "admin_edit_messages_menu":
+    # --- মেসেজ ম্যানেজমেন্ট মেনু ---
+    elif data == "admin_messages_menu":
         if user_id != admin_id:
             return
         keyboard = [
-            [InlineKeyboardButton("📝 ওয়েলকাম ও রুলস মেসেজ", callback_data="edit_msg:rules_welcome")],
-            [InlineKeyboardButton("📝 সাপোর্ট মেসেজ", callback_data="edit_msg:support_text")],
-            [InlineKeyboardButton("📝 মেইনটেনেন্স মেসেজ", callback_data="edit_msg:maintenance_text")],
-            [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
+            [InlineKeyboardButton(f"{v}", callback_data=f"msg_view:{k}")] for k, v in MESSAGE_NAMES.items()
         ]
-        await query.edit_message_text("📝 কোন মেসেজটি এডিট করতে চান? নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
+        keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")])
+        await query.edit_message_text("💬 কোন বাটনের মেসেজ কাস্টমাইজ বা এডিট/ডিলিট করতে চান? নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif data.startswith("edit_msg:"):
+    elif data.startswith("msg_view:"):
+        if user_id != admin_id:
+            return
+        msg_key = data.split(":")[1]
+        current_text = get_custom_msg(msg_key)
+        name = MESSAGE_NAMES.get(msg_key, msg_key)
+
+        preview = current_text if len(current_text) <= 300 else current_text[:300] + "..."
+
+        keyboard = [
+            [InlineKeyboardButton("✍️ নতুন মেসেজ লিখুন / Edit", callback_data=f"msg_set:{msg_key}")],
+            [InlineKeyboardButton("🗑 মেসেজ রিসেট / মুছুন (Default)", callback_data=f"msg_del:{msg_key}")],
+            [InlineKeyboardButton("⬅️ Back to Messages", callback_data="admin_messages_menu")]
+        ]
+        await query.edit_message_text(
+            f"📌 **বাটন:** {name}\n\n"
+            f"📝 **বর্তমান মেসেজ প্রিভিউ:**\n`{preview}`\n\n"
+            f"নিচের অপশন বেছে নিন:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("msg_set:"):
         if user_id != admin_id:
             return
         msg_key = data.split(":")[1]
         context.user_data["editing_msg_key"] = msg_key
-        context.user_data["state"] = "waiting_new_message_text"
+        context.user_data["state"] = "waiting_new_msg_text"
 
-        hint = ""
-        if msg_key == "rules_welcome":
-            hint = "\n\n💡 টিপস: লেখার মধ্যে `{name}` রাখলে সেখানে স্বয়ংক্রিয়ভাবে ইউজারের নাম বসে যাবে।"
+        tips = ""
+        if msg_key == "rules":
+            tips = "\n💡 টিপস: লেখার মধ্যে `{name}` দিলে সেখানে ইউজারের নাম বসবে।"
+        elif msg_key == "referral":
+            tips = "\n💡 টিপস: লেখার মধ্যে `{link}` দিলে রেফারেল লিংক এবং `{bonus}` দিলে বোনাসের টাকা বসবে।"
 
-        await query.edit_message_text(f"এই মেসেজের জন্য নতুন সম্পূর্ণ টেক্সটটি লিখে পাঠান:{hint}\n(কী: {msg_key})")
+        await query.edit_message_text(f"✍️ **{MESSAGE_NAMES.get(msg_key)}** বাটনের জন্য নতুন মেসেজটি লিখে পাঠিয়ে দিন:{tips}\n\n(ক্যানসেল করতে /cancel পাঠান)")
 
-    # --- বাটন নাম এডিট সাব-মেনু ---
+    elif data.startswith("msg_del:"):
+        if user_id != admin_id:
+            return
+        msg_key = data.split(":")[1]
+        delete_custom_msg(msg_key)
+        await query.answer("মেসেজ সফলভাবে রিসেট/মুছে ফেলা হয়েছে!", show_alert=True)
+        # প্রিভিউ পেজে ফেরত যাওয়া
+        await button_handler(update, context)
+
+    # --- বাটন টাইটেল এডিট ---
     elif data == "admin_edit_buttons_menu":
         if user_id != admin_id:
             return
@@ -663,7 +667,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("✏️ Support বাটন", callback_data="edit_btn:support")],
             [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
         ]
-        await query.edit_message_text("✏️ কোন বাটনটির নাম পরিবর্তন করতে চান? নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("✏️ কোন বাটনটির নাম পরিবর্তন করতে চান?", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("edit_btn:"):
         if user_id != admin_id:
@@ -671,40 +675,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         btn_key = data.split(":")[1]
         context.user_data["editing_btn_key"] = btn_key
         context.user_data["state"] = "waiting_new_button_title"
-        await query.edit_message_text(f"বাটনটির নতুন নাম কী রাখতে চান? লিখে মেসেজ পাঠান:\n(বাটনের কী: {btn_key})")
+        await query.edit_message_text(f"বাটনটির নতুন নাম লিখে পাঠান:\n(কী: {btn_key})")
 
     elif data == "admin_add_button":
         if user_id != admin_id:
             return
         context.user_data["state"] = "admin_add_button_title"
-        await query.edit_message_text("➕ Add New Button\n\nপ্রথমে বাটনের নাম লিখে পাঠান।\n\nউদাহরণ:\n📢 Our Channel")
+        await query.edit_message_text("➕ Add Link Button\n\nপ্রথমে বাটনের নাম লিখে পাঠান:")
 
     elif data == "admin_remove_button":
         if user_id != admin_id:
             return
         buttons = db_execute("SELECT * FROM buttons ORDER BY id DESC", fetchall=True)
         if not buttons:
-            await query.edit_message_text(
-                "কোনো কাস্টম বাটন তৈরি করা নেই।",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]])
-            )
+            await query.edit_message_text("কোনো কাস্টম লিংক বাটন নেই।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]]))
             return
 
         keyboard = [[InlineKeyboardButton(f"❌ {b['title']}", callback_data=f"delete_button:{b['id']}")] for b in buttons]
         keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")])
-        await query.edit_message_text("🗑 মুছে ফেলতে বাটন নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("মুছে ফেলতে বাটন নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "admin_broadcast":
         if user_id != admin_id:
             return
         context.user_data["state"] = "admin_broadcast"
-        await query.edit_message_text("📢 Broadcast Post\n\nসকল ইউজারের কাছে যে বার্তাটি পাঠাতে চান তা লিখে পাঠান:")
+        await query.edit_message_text("📢 ব্রডকাস্ট করার মেসেজটি লিখে পাঠান:")
 
     elif data == "admin_single_message":
         if user_id != admin_id:
             return
         context.user_data["state"] = "admin_single_user"
-        await query.edit_message_text("✉️ Single User Message\n\nপ্রথমে ইউজারের নিউমেরিক আইডি পাঠান:")
+        await query.edit_message_text("✉️ যাকে মেসেজ পাঠাবেন তার টেলিগ্রাম আইডি পাঠান:")
 
     elif data == "admin_stats":
         if user_id != admin_id:
@@ -731,20 +732,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
         if not sub or sub["status"] != "pending":
-            await query.answer("Already processed.", show_alert=True)
             return
-
         db_execute("UPDATE submissions SET status='approved' WHERE id=?", (sub_id,))
         update_balance(sub["user_id"], REWARD_PER_FILE)
-        await query.edit_message_text(f"✅ Submission #{sub_id} Approved! ৳{REWARD_PER_FILE} BDT যোগ হয়েছে।")
+        await query.edit_message_text(f"✅ Submission #{sub_id} Approved! ৳{REWARD_PER_FILE} যোগ হয়েছে।")
         try:
-            await context.bot.send_message(
-                chat_id=sub["user_id"],
-                text=(
-                    f"🎉 অভিনন্দন! আপনার জমা দেওয়া ফ্রেশ জিমেইল ফাইলটি অনুমোদিত হয়েছে।\n"
-                    f"💰 আপনার অ্যাকাউন্টে ৳{REWARD_PER_FILE} যোগ করা হয়েছে।"
-                )
-            )
+            await context.bot.send_message(chat_id=sub["user_id"], text=f"🎉 আপনার জিমেইল ফাইল অনুমোদিত হয়েছে! ৳{REWARD_PER_FILE} BDT ব্যালেন্সে যোগ হয়েছে।")
         except Exception:
             pass
 
@@ -754,19 +747,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
         if not sub or sub["status"] != "pending":
-            await query.answer("Already processed.", show_alert=True)
             return
-
         db_execute("UPDATE submissions SET status='rejected' WHERE id=?", (sub_id,))
         await query.edit_message_text(f"❌ Submission #{sub_id} Rejected.")
         try:
-            await context.bot.send_message(
-                chat_id=sub["user_id"],
-                text=(
-                    "❌ আপনার জমা দেওয়া জিমেইল ফাইলটি বাতিল (Rejected) করা হয়েছে।\n\n"
-                    "⚠️ কারণ: ফাইলে ভুল মেইল ছিল অথবা ফ্রেশ জিমেইল পাওয়া যায়নি। দয়া করে সঠিক ফ্রেশ জিমেইল ফাইল জমা দিন।"
-                )
-            )
+            await context.bot.send_message(chat_id=sub["user_id"], text="❌ আপনার ফাইলটি বাতিল করা হয়েছে। দয়া করে সঠিক ফ্রেশ জিমেইল ফাইল পাঠান।")
         except Exception:
             pass
 
@@ -774,72 +759,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("approve_withdraw:"):
         if user_id != admin_id:
             return
-        withdrawal_id = int(data.split(":")[1])
-        withdrawal = db_execute("SELECT * FROM withdrawals WHERE id=?", (withdrawal_id,), fetchone=True)
-        if not withdrawal or withdrawal["status"] != "pending":
-            await query.answer("Already processed.", show_alert=True)
+        w_id = int(data.split(":")[1])
+        w = db_execute("SELECT * FROM withdrawals WHERE id=?", (w_id,), fetchone=True)
+        if not w or w["status"] != "pending":
             return
-
-        balance = get_balance(withdrawal["user_id"])
-        if balance < float(withdrawal["amount"]):
-            db_execute("UPDATE withdrawals SET status='rejected' WHERE id=?", (withdrawal_id,))
-            await query.edit_message_text("❌ Withdrawal rejected: ব্যালেন্স পর্যাপ্ত নেই।")
+        bal = get_balance(w["user_id"])
+        if bal < float(w["amount"]):
+            db_execute("UPDATE withdrawals SET status='rejected' WHERE id=?", (w_id,))
+            await query.edit_message_text("❌ পর্যাপ্ত ব্যালেন্স না থাকায় রিজেক্ট করা হলো।")
             return
-
-        update_balance(withdrawal["user_id"], -float(withdrawal["amount"]))
-        db_execute("UPDATE withdrawals SET status='approved' WHERE id=?", (withdrawal_id,))
-
-        receive_bdt = float(withdrawal['receive_amount'])
-        receive_usdt = receive_bdt / USDT_RATE
-
-        await query.edit_message_text(
-            f"✅ Withdrawal Approved.\nইউজার পাবে: ৳{receive_bdt:.2f} BDT (${receive_usdt:.2f} USDT)"
-        )
-
+        update_balance(w["user_id"], -float(w["amount"]))
+        db_execute("UPDATE withdrawals SET status='approved' WHERE id=?", (w_id,))
+        rec_bdt = float(w['receive_amount'])
+        rec_usdt = rec_bdt / USDT_RATE
+        await query.edit_message_text(f"✅ Withdrawal Approved! পেমেন্ট: ৳{rec_bdt:.2f} (${rec_usdt:.2f})")
         try:
-            msg_text = (
-                f"✅ আপনার উইথড্রয়াল সফল হয়েছে!\n\n"
-                f"💸 পাঠানো হয়েছে: ৳{receive_bdt:.2f} BDT"
-            )
-            if withdrawal["method"] == "Binance":
-                msg_text += f" (${receive_usdt:.2f} USDT)"
-            msg_text += f"\n💳 মেথড: {withdrawal['method']}\n📌 একাউন্ট/UID: {withdrawal['account']}"
-
-            await context.bot.send_message(chat_id=withdrawal["user_id"], text=msg_text)
+            msg = f"✅ উইথড্র সফল হয়েছে!\n💸 পেয়েছেন: ৳{rec_bdt:.2f} BDT"
+            if w["method"] == "Binance":
+                msg += f" (${rec_usdt:.2f} USDT)"
+            msg += f"\n💳 মেথড: {w['method']}\n📌 একাউন্ট/UID: {w['account']}"
+            await context.bot.send_message(chat_id=w["user_id"], text=msg)
         except Exception:
             pass
 
     elif data.startswith("reject_withdraw:"):
         if user_id != admin_id:
             return
-        withdrawal_id = int(data.split(":")[1])
-        withdrawal = db_execute("SELECT * FROM withdrawals WHERE id=?", (withdrawal_id,), fetchone=True)
-        if not withdrawal or withdrawal["status"] != "pending":
-            await query.answer("Already processed.", show_alert=True)
+        w_id = int(data.split(":")[1])
+        w = db_execute("SELECT * FROM withdrawals WHERE id=?", (w_id,), fetchone=True)
+        if not w or w["status"] != "pending":
             return
-
-        db_execute("UPDATE withdrawals SET status='rejected' WHERE id=?", (withdrawal_id,))
-        await query.edit_message_text(f"❌ Withdrawal #{withdrawal_id} Rejected.")
-
+        db_execute("UPDATE withdrawals SET status='rejected' WHERE id=?", (w_id,))
+        await query.edit_message_text(f"❌ Withdrawal #{w_id} Rejected.")
         try:
-            await context.bot.send_message(
-                chat_id=withdrawal["user_id"],
-                text=(
-                    "❌ আপনার উইথড্রয়াল রিকোয়েস্টটি বাতিল (Rejected) করা হয়েছে।\n\n"
-                    f"💸 অ্যামাউন্ট: ৳{withdrawal['amount']:.2f}\n"
-                    f"💳 মেথড: {withdrawal['method']}\n"
-                    f"📞 বিস্তারিত জানতে সাপোর্টে যোগাযোগ করুন।"
-                )
-            )
+            await context.bot.send_message(chat_id=w["user_id"], text=f"❌ উইথড্রয়াল রিকোয়েস্ট (৳{w['amount']:.2f}) বাতিল করা হয়েছে।")
         except Exception:
             pass
 
     elif data.startswith("delete_button:"):
         if user_id != admin_id:
             return
-        button_id = int(data.split(":")[1])
-        db_execute("DELETE FROM buttons WHERE id=?", (button_id,))
-        await query.answer("Button deleted.")
+        b_id = int(data.split(":")[1])
+        db_execute("DELETE FROM buttons WHERE id=?", (b_id,))
+        await query.answer("বাটন মুছে ফেলা হয়েছে।")
         await show_admin_panel(query)
 
 
@@ -854,10 +816,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     admin_id = get_admin_id()
 
-    # Maintenance Check
     if is_maintenance_mode() and user.id != admin_id:
-        m_msg = get_custom_message("maintenance_text", DEFAULT_MAINTENANCE)
-        await update.message.reply_text(m_msg)
+        await update.message.reply_text(get_custom_msg("maintenance"))
         return
 
     add_user(user)
@@ -871,184 +831,176 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     btn_rules = get_button_title("rules", "📜 RULES")
     btn_sup = get_button_title("support", "📞 SUPPORT")
 
-    # মেসেজ এডিটের ইনপুট নেওয়া
-    if user.id == admin_id and state == "waiting_new_message_text":
-        msg_key = context.user_data.get("editing_msg_key")
-        if text:
-            set_custom_message(msg_key, text)
-            context.user_data.clear()
-            await update.message.reply_text(f"✅ সফল হয়েছে! '{msg_key}' মেসেজ টেক্সট আপডেট করা হয়েছে।")
+    # ক্যানসেল কমান্ড
+    if text == "/cancel":
+        context.user_data.clear()
+        await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
-    # বাটন নাম এডিটের ইনপুট নেওয়া
+    # মেসেজ এডিটের ইনপুট
+    if user.id == admin_id and state == "waiting_new_msg_text":
+        key = context.user_data.get("editing_msg_key")
+        if text:
+            set_custom_msg(key, text)
+            context.user_data.clear()
+            await update.message.reply_text(f"✅ সফল হয়েছে! '{MESSAGE_NAMES.get(key)}' মেসেজটি সেভ হয়েছে।")
+        return
+
+    # বাটন নাম এডিটের ইনপুট
     if user.id == admin_id and state == "waiting_new_button_title":
         btn_key = context.user_data.get("editing_btn_key")
         if text:
             set_button_title(btn_key, text)
             context.user_data.clear()
-            await update.message.reply_text(f"✅ সফল হয়েছে! '{btn_key}' বাটনের নতুন নাম রাখা হয়েছে:\n{text}")
+            await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}")
         return
 
-    # বাটন ক্লিকে রেসপন্স
+    # বাটন ক্লিক
     if text == btn_sell:
         count = get_today_file_count(user.id)
         if count >= DAILY_FILE_LIMIT:
-            await update.message.reply_text(
-                f"❌ দৈনিক লিমিট শেষ।\n\nআপনি প্রতিদিন সর্বোচ্চ {DAILY_FILE_LIMIT}টি ফাইল পাঠাতে পারবেন।"
-            )
+            await update.message.reply_text(f"❌ দৈনিক লিমিট শেষ ({DAILY_FILE_LIMIT}/{DAILY_FILE_LIMIT})।")
             return
 
         context.user_data["state"] = "waiting_file"
+        sell_msg = get_custom_msg("sell")
         await update.message.reply_text(
-            f"📤 আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।\n\n"
-            f"⚠️ সতর্কতা: শুধুমাত্র @gmail.com ফরম্যাটের মেইল গ্রহণ করা হবে। অন্য কোনো মেইল বা টেক্সট গ্রহণযোগ্য নয়।\n\n"
-            f"আজকের সাবমিশন: {count}/{DAILY_FILE_LIMIT}\n"
-            f"অনুমোদিত ফাইল রিওয়ার্ড: ৳{REWARD_PER_FILE} BDT"
+            f"{sell_msg}\n\n"
+            f"📊 আজকের সাবমিশন: {count}/{DAILY_FILE_LIMIT}\n"
+            f"💰 প্রতি ফাইল রিওয়ার্ড: ৳{REWARD_PER_FILE} BDT"
         )
         return
 
     elif text == btn_bal:
-        balance_bdt = get_balance(user.id)
-        balance_usdt = balance_bdt / USDT_RATE
-        ref_count = get_referral_count(user.id)
+        b_bdt = get_balance(user.id)
+        b_usdt = b_bdt / USDT_RATE
+        refs = get_referral_count(user.id)
         await update.message.reply_text(
             f"💰 YOUR ACCOUNT BALANCE\n\n"
-            f"🔹 BDT Balance: ৳{balance_bdt:.2f} BDT\n"
-            f"🔹 USDT Balance: ${balance_usdt:.2f} USDT\n"
-            f"👥 Total Referrals: {ref_count} users"
+            f"🔹 BDT Balance: ৳{b_bdt:.2f} BDT\n"
+            f"🔹 USDT Balance: ${b_usdt:.2f} USDT\n"
+            f"👥 Total Referrals: {refs} users"
         )
         return
 
     elif text == btn_wd:
-        balance_bdt = get_balance(user.id)
-        balance_usdt = balance_bdt / USDT_RATE
-        if balance_bdt < MIN_WITHDRAW:
-            await update.message.reply_text(
-                f"❌ সর্বনিম্ন উইথড্র ৳{MIN_WITHDRAW} BDT।\n\n"
-                f"আপনার বর্তমান ব্যালেন্স: ৳{balance_bdt:.2f} BDT (${balance_usdt:.2f} USDT)"
-            )
+        bal = get_balance(user.id)
+        bal_usdt = bal / USDT_RATE
+        if bal < MIN_WITHDRAW:
+            await update.message.reply_text(f"❌ সর্বনিম্ন উইথড্র ৳{MIN_WITHDRAW} BDT। আপনার আছে: ৳{bal:.2f} BDT")
             return
 
         context.user_data["state"] = "withdraw_amount"
         await update.message.reply_text(
             f"💸 WITHDRAWAL SYSTEM\n\n"
-            f"💰 Available Balance: ৳{balance_bdt:.2f} BDT (${balance_usdt:.2f} USDT)\n"
-            f"🔹 Minimum Withdraw: ৳{MIN_WITHDRAW} BDT\n"
-            f"🔹 Fee: {WITHDRAW_FEE_PERCENT}%\n"
-            f"🔹 Dollar Rate: $1 = ৳{USDT_RATE:.2f}\n\n"
-            f"কত টাকা (BDT) উইথড্র করতে চান? টাকার পরিমাণ লিখে পাঠান:"
+            f"💰 ব্যালেন্স: ৳{bal:.2f} BDT (${bal_usdt:.2f} USDT)\n"
+            f"🔹 সর্বনিম্ন উইথড্র: ৳{MIN_WITHDRAW} BDT\n"
+            f"🔹 ফি: {WITHDRAW_FEE_PERCENT}%\n"
+            f"🔹 ডলার রেট: $1 = ৳{USDT_RATE:.2f}\n\n"
+            f"কত টাকা উইথড্র করতে চান? সংখ্যায় লিখে পাঠান:"
         )
         return
 
     elif text == btn_ref:
-        bot_info = await context.bot.get_me()
-        bot_username = bot_info.username
-        referral_link = f"https://t.me/{bot_username}?start={user.id}"
-        ref_count = get_referral_count(user.id)
-        total_earned = ref_count * REFERRAL_BONUS
+        b_info = await context.bot.get_me()
+        ref_link = f"https://t.me/{b_info.username}?start={user.id}"
+        refs = get_referral_count(user.id)
+        earned = refs * REFERRAL_BONUS
+
+        ref_template = get_custom_msg("referral")
+        custom_ref = ref_template.replace("{link}", ref_link).replace("{bonus}", str(REFERRAL_BONUS))
 
         msg = (
-            f"👥 রেফার করে ইনকাম করুন!\n\n"
-            f"আপনি প্রতি সফল রেফারে পাবেন ৳{REFERRAL_BONUS:.2f} BDT বোনাস।\n"
-            f"আপনার রেফার লিংকটি শেয়ার করুন:\n\n"
-            f"🔗 রেফারেল লিংক:\n`{referral_link}`\n\n"
-            f"📊 রেফারেল পরিসংখ্যান:\n"
-            f"🔹 মোট রেফার: {ref_count} জন\n"
-            f"🔹 মোট আয়: ৳{total_earned:.2f} BDT"
+            f"{custom_ref}\n\n"
+            f"📊 আপনার রেফারেল পরিসংখ্যান:\n"
+            f"🔹 মোট রেফার: {refs} জন\n"
+            f"🔹 মোট আয়: ৳{earned:.2f} BDT"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
         return
 
     elif text == btn_rules:
         name = user.first_name or "User"
-        rules_msg = get_rules_text(name)
-        await update.message.reply_text(rules_msg)
+        rules = get_custom_msg("rules").replace("{name}", name)
+        await update.message.reply_text(rules)
         return
 
     elif text == btn_sup:
-        sup_text = get_custom_message("support_text", DEFAULT_SUPPORT)
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 মেসেজ পাঠান", url="https://t.me/Talha_juba098")]
-        ])
+        sup_text = get_custom_msg("support")
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💬 মেসেজ পাঠান", url="https://t.me/Talha_juba098")]])
         await update.message.reply_text(sup_text, reply_markup=keyboard)
         return
 
-    # Admin Actions
+    # Admin actions
     if user.id == admin_id and state == "admin_add_button_title":
         context.user_data["button_title"] = text
         context.user_data["state"] = "admin_add_button_url"
-        await update.message.reply_text("এখন বাটনের URL দিন (যেমন: https://t.me/yourchannel):")
+        await update.message.reply_text("বাটনের URL দিন:")
         return
 
     if user.id == admin_id and state == "admin_add_button_url":
-        url = text
-        if not url.startswith(("http://", "https://", "tg://")):
-            await update.message.reply_text("❌ সঠিক URL লিখে পাঠান।")
+        if not text.startswith(("http://", "https://", "tg://")):
+            await update.message.reply_text("❌ সঠিক URL দিন।")
             return
-        title = context.user_data.get("button_title")
-        db_execute("INSERT INTO buttons (title, url) VALUES (?, ?)", (title, url))
+        t = context.user_data.get("button_title")
+        db_execute("INSERT INTO buttons (title, url) VALUES (?, ?)", (t, text))
         context.user_data.clear()
-        await update.message.reply_text(f"✅ বাটন যুক্ত হয়েছে:\n{title} -> {url}")
+        await update.message.reply_text(f"✅ বাটন যুক্ত হয়েছে: {t} -> {text}")
         return
 
     if user.id == admin_id and state == "admin_broadcast":
         users = db_execute("SELECT user_id FROM users", fetchall=True)
-        success = 0
+        count = 0
         for u in users:
             try:
                 await context.bot.send_message(chat_id=u["user_id"], text=text)
-                success += 1
+                count += 1
             except Exception:
                 pass
         context.user_data.clear()
-        await update.message.reply_text(f"📢 ব্রডকাস্ট সম্পন্ন: {success}/{len(users)}")
+        await update.message.reply_text(f"📢 ব্রডকাস্ট সম্পন্ন: {count}/{len(users)}")
         return
 
     if user.id == admin_id and state == "admin_single_user":
         try:
             context.user_data["target_user"] = int(text)
             context.user_data["state"] = "admin_single_text"
-            await update.message.reply_text("এখন বার্তাটি লিখে পাঠান যা আপনি পাঠাতে চান:")
+            await update.message.reply_text("মেসেজটি লিখে পাঠান:")
         except ValueError:
-            await update.message.reply_text("❌ সঠিক নিউমেরিক ইউজার আইডি পাঠান।")
+            await update.message.reply_text("❌ সঠিক নিউমেরিক আইডি দিন।")
         return
 
     if user.id == admin_id and state == "admin_single_text":
-        target_id = context.user_data.get("target_user")
+        t_id = context.user_data.get("target_user")
         try:
-            await context.bot.send_message(chat_id=target_id, text=text)
-            await update.message.reply_text("✅ বার্তা সফলভাবে পাঠানো হয়েছে।")
+            await context.bot.send_message(chat_id=t_id, text=text)
+            await update.message.reply_text("✅ মেসেজ পাঠানো হয়েছে।")
         except Exception as e:
-            await update.message.reply_text(f"❌ বার্তা পাঠানো যায়নি: {e}")
+            await update.message.reply_text(f"❌ ব্যর্থ হয়েছে: {e}")
         context.user_data.clear()
         return
 
-    # Withdraw Handling
+    # Withdraw input
     if state == "withdraw_amount":
         try:
             amount = float(text)
         except ValueError:
-            await update.message.reply_text("❌ সঠিক সংখ্যায় টাকার পরিমাণ লিখুন।")
+            await update.message.reply_text("❌ সঠিক সংখ্যা লিখুন।")
             return
 
         if amount < MIN_WITHDRAW:
             await update.message.reply_text(f"❌ সর্বনিম্ন উইথড্র ৳{MIN_WITHDRAW} BDT।")
             return
 
-        balance = get_balance(user.id)
-        if amount > balance:
-            await update.message.reply_text(f"❌ অপর্যাপ্ত ব্যালেন্স। আপনার আছে: ৳{balance:.2f} BDT")
+        if amount > get_balance(user.id):
+            await update.message.reply_text("❌ ব্যালেন্স পর্যাপ্ত নেই।")
             return
 
         fee = amount * WITHDRAW_FEE_PERCENT / 100
-        receive = amount - fee
-        receive_usdt = receive / USDT_RATE
+        rec = amount - fee
+        rec_usdt = rec / USDT_RATE
 
-        context.user_data.update({
-            "withdraw_amount": amount,
-            "withdraw_fee": fee,
-            "withdraw_receive": receive
-        })
+        context.user_data.update({"withdraw_amount": amount, "withdraw_fee": fee, "withdraw_receive": rec})
         context.user_data["state"] = "withdraw_method"
 
         keyboard = [
@@ -1057,34 +1009,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("💰 Binance (UID)", callback_data="method_binance")]
         ]
         await update.message.reply_text(
-            f"💸 WITHDRAWAL SUMMARY\n\n"
-            f"🔹 উত্তোলনের পরিমাণ: ৳{amount:.2f} BDT\n"
-            f"🔹 ফি ({WITHDRAW_FEE_PERCENT}%): ৳{fee:.2f} BDT\n"
-            f"🔹 আপনি পাবেন: ৳{receive:.2f} BDT (${receive_usdt:.2f} USDT)\n\n"
-            f"পেমেন্ট মেথড নির্বাচন করুন:",
+            f"💸 উইথড্র সামারি:\nউত্তোলন: ৳{amount:.2f} BDT\nফি: ৳{fee:.2f} BDT\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\nমেথড নির্বাচন করুন:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
 
     if state == "withdraw_account":
-        account = text
         method = context.user_data.get("withdraw_method")
 
-        if method in ["Bkash", "Nagad"]:
-            if not BD_PHONE_REGEX.match(account):
-                await update.message.reply_text(
-                    f"❌ ভুল {method} নম্বর!\n\n"
-                    f"দয়া করে ১১ ডিজিটের সঠিক বাংলাদেশি মোবাইল নম্বর দিন (যেমন: 017xxxxxxxx, 018xxxxxxxx)।"
-                )
-                return
-
-        elif method == "Binance":
-            if not BINANCE_UID_REGEX.match(account):
-                await update.message.reply_text(
-                    "❌ ভুল Binance UID!\n\n"
-                    "Binance UID শুধুমাত্র ৭ থেকে ১০ ডিজিটের খাঁটি সংখ্যা (যেমন: 123456789) হয়ে থাকে।"
-                )
-                return
+        if method in ["Bkash", "Nagad"] and not BD_PHONE_REGEX.match(text):
+            await update.message.reply_text(f"❌ ভুল {method} নম্বর! ১১ ডিজিটের বাংলাদেশি নম্বর দিন।")
+            return
+        elif method == "Binance" and not BINANCE_UID_REGEX.match(text):
+            await update.message.reply_text("❌ ভুল Binance UID! শুধুমাত্র ৭-১০ ডিজিটের সংখ্যা দিন।")
+            return
 
         amt = context.user_data["withdraw_amount"]
         fee = context.user_data["withdraw_fee"]
@@ -1094,18 +1032,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_execute("""
             INSERT INTO withdrawals (user_id, amount, fee, receive_amount, method, account, status, created_at)
             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
-        """, (user.id, amt, fee, rec, method, account, datetime.now().isoformat()))
+        """, (user.id, amt, fee, rec, method, text, datetime.now().isoformat()))
 
         w_id = db_execute("SELECT last_insert_rowid() AS id", fetchone=True)["id"]
         context.user_data.clear()
 
-        await update.message.reply_text(
-            f"✅ উইথড্র রিকোয়েস্ট সফলভাবে জমা হয়েছে!\n\n"
-            f"🔹 মেথড: {method}\n"
-            f"🔹 অ্যাকাউন্ট/UID: {account}\n"
-            f"🔹 আপনি পাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\n"
-            f"⏳ অ্যাডমিন ভেরিফাই করে পেমেন্ট পাঠিয়ে দেবে।"
-        )
+        await update.message.reply_text(f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: {text}\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)")
 
         if admin_id:
             keyboard = InlineKeyboardMarkup([
@@ -1114,28 +1046,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
             await context.bot.send_message(
                 chat_id=admin_id,
-                text=(
-                    f"🔔 NEW WITHDRAWAL REQUEST (#{w_id})\n\n"
-                    f"👤 ইউজার: @{user.username or 'No username'} ({user.id})\n"
-                    f"💰 রিকোয়েস্ট: ৳{amt:.2f} BDT\n"
-                    f"💸 প্রদানযোগ্য: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n"
-                    f"💳 মেথড: {method}\n"
-                    f"📌 অ্যাকাউন্ট/UID: {account}"
-                ),
+                text=f"🔔 নতুন উইথড্র রিকোয়েস্ট (#{w_id})\nইউজার: {user.id}\nটাকা: ৳{rec:.2f} (${rec_usdt:.2f})\nমেথড: {method}\nঅ্যাকাউন্ট: {text}",
                 reply_markup=keyboard
             )
         return
 
-    # File Submission
+    # File input
     if state == "waiting_file":
         doc = update.message.document
         if not doc:
-            await update.message.reply_text("❌ অনুগ্রহ করে এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।")
+            await update.message.reply_text("❌ এক্সেল বা সিএসভি ফাইল (.xlsx, .csv) পাঠান।")
             return
 
-        file_name = doc.file_name.lower()
-        if not (file_name.endswith(".xlsx") or file_name.endswith(".xls") or file_name.endswith(".csv")):
-            await update.message.reply_text("❌ শুধুমাত্র Excel (.xlsx, .xls) অথবা CSV (.csv) ফাইল গ্রহণ করা হয়।")
+        fn = doc.file_name.lower()
+        if not (fn.endswith(".xlsx") or fn.endswith(".xls") or fn.endswith(".csv")):
+            await update.message.reply_text("❌ শুধুমাত্র Excel বা CSV ফাইল সাপোর্টেড।")
             return
 
         os.makedirs("downloads", exist_ok=True)
@@ -1144,21 +1069,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await tg_file.download_to_drive(local_path)
 
         try:
-            total_found, valid_count, sample_list = validate_gmail_file(local_path)
+            total, valid_count, samples = validate_gmail_file(local_path)
         except Exception as e:
             if os.path.exists(local_path):
                 os.remove(local_path)
-            await update.message.reply_text(f"❌ ফাইল পড়তে সমস্যা হয়েছে: {e}")
+            await update.message.reply_text(f"❌ ফাইল এরর: {e}")
             return
 
         if os.path.exists(local_path):
             os.remove(local_path)
 
         if valid_count == 0:
-            await update.message.reply_text(
-                "❌ ফাইলে কোনো সঠিক Gmail অ্যাকাউন্ট পাওয়া যায়নি!\n"
-                "মনে রাখবেন: শুধু `@gmail.com` সাপোর্টেড। ইয়াহু বা অন্য কোনো মেইল বা সাধারণ টেক্সট গ্রহণযোগ্য নয়।"
-            )
+            await update.message.reply_text("❌ কোনো ভ্যালিড @gmail.com পাওয়া যায়নি!")
             return
 
         db_execute("""
@@ -1170,28 +1092,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         increase_file_count(user.id)
         context.user_data.clear()
 
-        await update.message.reply_text(
-            f"✅ ফাইল সফলভাবে জমা হয়েছে!\n\n"
-            f"🔍 যাচাইকৃত ফ্রেশ Gmail পাওয়া গেছে: {valid_count} টি\n"
-            f"⏳ অ্যাডমিন ভেরিফাই করলেই আপনার অ্যাকাউন্টে ৳{REWARD_PER_FILE} BDT যোগ হবে।"
-        )
+        await update.message.reply_text(f"✅ ফাইল জমা হয়েছে!\nভ্যালিড জিমেইল: {valid_count} টি।\nঅনুমোদনের পর ৳{REWARD_PER_FILE} যোগ হবে।")
 
         if admin_id:
-            sample_str = "\n".join(sample_list)
+            s_str = "\n".join(samples)
             admin_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Approve", callback_data=f"approve_sub:{sub_id}"),
                  InlineKeyboardButton("❌ Reject", callback_data=f"reject_sub:{sub_id}")]
             ])
-            caption = (
-                f"📁 NEW GMAIL SUBMISSION (#{sub_id})\n\n"
-                f"👤 ইউজার: @{user.username or 'No username'} ({user.id})\n"
-                f"✉️ ভ্যালিড Gmail সংখ্যা: {valid_count}\n"
-                f"📋 কিছু মেইল নমুনা:\n{sample_str}"
-            )
             await context.bot.send_document(
                 chat_id=admin_id,
                 document=doc.file_id,
-                caption=caption,
+                caption=f"📁 নতুন জিমেইল ফাইল (#{sub_id})\nইউজার: {user.id}\nভ্যালিড: {valid_count}\nনমুনা:\n{s_str}",
                 reply_markup=admin_kb
             )
         return
@@ -1205,18 +1117,15 @@ async def withdrawal_method_handler(update: Update, context: ContextTypes.DEFAUL
     if query.data.startswith("method_"):
         raw_m = query.data.replace("method_", "").lower()
         if raw_m == "bkash":
-            method = "Bkash"
-            hint = "আপনার ১১ ডিজিটের বিকাশ নম্বর দিন (যেমন: 017xxxxxxxx):"
+            method, hint = "Bkash", "১১ ডিজিটের বিকাশ নম্বর দিন:"
         elif raw_m == "nagad":
-            method = "Nagad"
-            hint = "আপনার ১১ ডিজিটের নগদ নম্বর দিন (যেমন: 018xxxxxxxx):"
+            method, hint = "Nagad", "১১ ডিজিটের নগদ নম্বর দিন:"
         else:
-            method = "Binance"
-            hint = "আপনার বাইনান্স ইউআইডি (Binance UID) দিন (৭-১০ ডিজিটের সংখ্যা):"
+            method, hint = "Binance", "বাইনান্স ইউআইডি (Binance UID) দিন (৭-১০ ডিজিট):"
 
         context.user_data["withdraw_method"] = method
         context.user_data["state"] = "withdraw_account"
-        await query.edit_message_text(f"💳 নির্বাচিত মেথড: {method}\n\n👉 {hint}")
+        await query.edit_message_text(f"💳 নির্বাচিত: {method}\n\n👉 {hint}")
 
 
 # =========================================================
