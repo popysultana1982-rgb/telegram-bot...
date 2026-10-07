@@ -1,9 +1,11 @@
 import os
+import re
 import sqlite3
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import openpyxl  # এক্সেল ফাইল পড়ার জন্য: pip install openpyxl
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -27,7 +29,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN environment variable is not set.")
 
-ADMIN_ID = 8919985167
+# টেলিগ্রাম থেকে সরাসরি সেট করার জন্য একটি গোপন পাসওয়ার্ড
+# টেলিগ্রামে গিয়ে কমান্ড দেবেন: /setadmin mysecretadmin123
+ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "mysecretadmin123")
 
 MIN_WITHDRAW = 50
 WITHDRAW_FEE_PERCENT = 4
@@ -35,8 +39,6 @@ REWARD_PER_FILE = 25
 DAILY_FILE_LIMIT = 5
 
 DB_NAME = "bot.db"
-
-# Render automatically provides PORT
 PORT = int(os.getenv("PORT", "10000"))
 
 
@@ -45,7 +47,6 @@ PORT = int(os.getenv("PORT", "10000"))
 # =========================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
-
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
@@ -57,13 +58,8 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def run_web_server():
-    server = ThreadingHTTPServer(
-        ("0.0.0.0", PORT),
-        HealthHandler
-    )
-
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), HealthHandler)
     print(f"Web server running on port {PORT}")
-
     server.serve_forever()
 
 
@@ -71,38 +67,22 @@ def run_web_server():
 # DATABASE
 # =========================================================
 
-db = sqlite3.connect(
-    DB_NAME,
-    check_same_thread=False
-)
-
+db = sqlite3.connect(DB_NAME, check_same_thread=False)
 db.row_factory = sqlite3.Row
 
 
-def db_execute(
-    query,
-    params=(),
-    fetchone=False,
-    fetchall=False
-):
-
+def db_execute(query, params=(), fetchone=False, fetchall=False):
     cur = db.cursor()
-
     cur.execute(query, params)
-
     db.commit()
-
     if fetchone:
         return cur.fetchone()
-
     if fetchall:
         return cur.fetchall()
-
     return None
 
 
 def init_db():
-
     db_execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -141,132 +121,107 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             file_id TEXT,
+            valid_emails INTEGER DEFAULT 0,
             status TEXT DEFAULT 'pending',
             created_at TEXT
         )
     """)
 
+    db_execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
 
 # =========================================================
-# USER FUNCTIONS
+# ADMIN & USER HELPERS
 # =========================================================
+
+def get_admin_id():
+    res = db_execute("SELECT value FROM settings WHERE key='admin_id'", fetchone=True)
+    if res:
+        try:
+            return int(res["value"])
+        except ValueError:
+            return None
+    return None
+
+
+def set_admin_id(user_id):
+    db_execute("""
+        INSERT INTO settings (key, value) VALUES ('admin_id', ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value
+    """, (str(user_id),))
+
 
 def add_user(user):
-
-    existing = db_execute(
-        "SELECT user_id FROM users WHERE user_id=?",
-        (user.id,),
-        fetchone=True
-    )
-
+    existing = db_execute("SELECT user_id FROM users WHERE user_id=?", (user.id,), fetchone=True)
     if not existing:
-
         db_execute("""
-            INSERT INTO users
-            (
-                user_id,
-                username,
-                balance,
-                files_today,
-                last_file_date,
-                created_at
-            )
+            INSERT INTO users (user_id, username, balance, files_today, last_file_date, created_at)
             VALUES (?, ?, 0, 0, ?, ?)
-        """, (
-            user.id,
-            user.username or "",
-            datetime.now().strftime("%Y-%m-%d"),
-            datetime.now().isoformat()
-        ))
-
+        """, (user.id, user.username or "", datetime.now().strftime("%Y-%m-%d"), datetime.now().isoformat()))
     else:
-
-        db_execute(
-            """
-            UPDATE users
-            SET username=?
-            WHERE user_id=?
-            """,
-            (
-                user.username or "",
-                user.id
-            )
-        )
+        db_execute("UPDATE users SET username=? WHERE user_id=?", (user.username or "", user.id))
 
 
 def get_user(user_id):
-
-    return db_execute(
-        "SELECT * FROM users WHERE user_id=?",
-        (user_id,),
-        fetchone=True
-    )
+    return db_execute("SELECT * FROM users WHERE user_id=?", (user_id,), fetchone=True)
 
 
 def get_balance(user_id):
-
     user = get_user(user_id)
-
-    if not user:
-        return 0
-
-    return float(user["balance"])
+    return float(user["balance"]) if user else 0
 
 
 def update_balance(user_id, amount):
-
-    db_execute(
-        """
-        UPDATE users
-        SET balance = balance + ?
-        WHERE user_id=?
-        """,
-        (
-            amount,
-            user_id
-        )
-    )
+    db_execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (amount, user_id))
 
 
 def get_today_file_count(user_id):
-
     user = get_user(user_id)
-
     today = datetime.now().strftime("%Y-%m-%d")
-
     if not user:
         return 0
-
     if user["last_file_date"] != today:
-
-        db_execute("""
-            UPDATE users
-            SET files_today=0,
-                last_file_date=?
-            WHERE user_id=?
-        """, (
-            today,
-            user_id
-        ))
-
+        db_execute("UPDATE users SET files_today=0, last_file_date=? WHERE user_id=?", (today, user_id))
         return 0
-
     return user["files_today"]
 
 
 def increase_file_count(user_id):
-
     today = datetime.now().strftime("%Y-%m-%d")
+    db_execute("UPDATE users SET files_today = files_today + 1, last_file_date = ? WHERE user_id=?", (today, user_id))
 
-    db_execute("""
-        UPDATE users
-        SET files_today = files_today + 1,
-            last_file_date = ?
-        WHERE user_id=?
-    """, (
-        today,
-        user_id
-    ))
+
+# =========================================================
+# EMAIL & EXCEL VALIDATION
+# =========================================================
+
+GMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@gmail\.com$", re.IGNORECASE)
+
+
+def validate_gmail_file(file_path):
+    emails = []
+    if file_path.endswith(".csv"):
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                for token in line.strip().split(","):
+                    val = token.strip()
+                    if "@" in val:
+                        emails.append(val)
+    else:
+        wb = openpyxl.load_workbook(file_path, data_only=True)
+        sheet = wb.active
+        for row in sheet.iter_rows(values_only=True):
+            for cell in row:
+                if cell and isinstance(cell, str) and "@" in cell:
+                    emails.append(cell.strip())
+
+    valid_gmails = [m for m in emails if GMAIL_REGEX.match(m)]
+    return len(emails), len(valid_gmails), valid_gmails[:5]
 
 
 # =========================================================
@@ -274,1210 +229,477 @@ def increase_file_count(user_id):
 # =========================================================
 
 async def show_main_menu(update, context):
-
     user = update.effective_user
-
     add_user(user)
-
     balance = get_balance(user.id)
 
     keyboard = [
         [
-            InlineKeyboardButton(
-                "📤 Sell",
-                callback_data="sell"
-            ),
-            InlineKeyboardButton(
-                "💰 Balance",
-                callback_data="balance"
-            )
+            InlineKeyboardButton("📤 Sell", callback_data="sell"),
+            InlineKeyboardButton("💰 Balance", callback_data="balance")
         ],
         [
-            InlineKeyboardButton(
-                "💸 Withdraw",
-                callback_data="withdraw"
-            ),
-            InlineKeyboardButton(
-                "📞 Support",
-                url="https://t.me/Talha_juba098"
-            )
+            InlineKeyboardButton("💸 Withdraw", callback_data="withdraw"),
+            InlineKeyboardButton("📞 Support", url="https://t.me/Talha_juba098")
         ]
     ]
 
-    buttons = db_execute(
-        "SELECT * FROM buttons ORDER BY id DESC",
-        fetchall=True
-    )
-
+    buttons = db_execute("SELECT * FROM buttons ORDER BY id DESC", fetchall=True)
     for button in buttons:
+        keyboard.append([InlineKeyboardButton(button["title"], url=button["url"])])
 
-        keyboard.append([
-            InlineKeyboardButton(
-                button["title"],
-                url=button["url"]
-            )
-        ])
-
-    text = (
-        "🤖 Welcome!\n\n"
-        f"💰 Balance: ৳{balance:.2f}\n\n"
-        "Choose an option below:"
-    )
+    text = f"🤖 Welcome!\n\n💰 Balance: ৳{balance:.2f}\n\nChoose an option below:"
 
     if update.callback_query:
-
-        await update.callback_query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-
-        await update.message.reply_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # =========================================================
-# START
+# START & ADMIN SETUP COMMANDS
 # =========================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     add_user(update.effective_user)
-
     context.user_data.clear()
-
     await show_main_menu(update, context)
 
 
-# =========================================================
-# ADMIN PANEL
-# =========================================================
+async def set_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not context.args:
+        await update.message.reply_text("ব্যবহার নিয়ম: `/setadmin <secret_key>`")
+        return
+
+    provided_key = context.args[0]
+    if provided_key == ADMIN_SECRET_KEY:
+        set_admin_id(user_id)
+        await update.message.reply_text(
+            f"✅ সফল হয়েছে! আপনার আইডি ({user_id}) এখন অ্যাডমিন হিসেবে সেট করা হয়েছে।\nএখন /admin লিখে প্যানেল ওপেন করুন।"
+        )
+    else:
+        await update.message.reply_text("❌ পাসওয়ার্ড ভুল!")
+
+
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = get_admin_id()
+    if not admin_id or update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ You are not authorized.\nঅ্যাডমিন সেট করতে `/setadmin <key>` ব্যবহার করুন।")
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👨‍💼 Open Admin Panel", callback_data="admin_panel")]
+    ])
+    await update.message.reply_text("🔐 Admin access granted.", reply_markup=keyboard)
+
 
 async def show_admin_panel(query):
-
     keyboard = [
-
-        [
-            InlineKeyboardButton(
-                "➕ Add Button",
-                callback_data="admin_add_button"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "🗑 Remove Button",
-                callback_data="admin_remove_button"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "📢 Broadcast Post",
-                callback_data="admin_broadcast"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "✉️ Single Message",
-                callback_data="admin_single_message"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "📊 Statistics",
-                callback_data="admin_stats"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "⬅️ Main Menu",
-                callback_data="home"
-            )
-        ]
+        [InlineKeyboardButton("➕ Add Button", callback_data="admin_add_button")],
+        [InlineKeyboardButton("🗑 Remove Button", callback_data="admin_remove_button")],
+        [InlineKeyboardButton("📢 Broadcast Post", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("✉️ Single Message", callback_data="admin_single_message")],
+        [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")],
+        [InlineKeyboardButton("⬅️ Main Menu", callback_data="home")]
     ]
-
-    await query.edit_message_text(
-        "👨‍💼 ADMIN PANEL\n\n"
-        "Choose an action:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await query.edit_message_text("👨‍💼 ADMIN PANEL\n\nChoose an action:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # =========================================================
 # CALLBACK HANDLER
 # =========================================================
 
-async def button_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-
     await query.answer()
-
     user_id = query.from_user.id
-
+    admin_id = get_admin_id()
     add_user(query.from_user)
-
     data = query.data
 
-    # =====================================================
-    # BALANCE
-    # =====================================================
-
     if data == "balance":
-
         balance = get_balance(user_id)
-
         await query.edit_message_text(
-            "💰 Your Balance\n\n"
-            f"Available Balance: ৳{balance:.2f}",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "⬅️ Back",
-                        callback_data="home"
-                    )
-                ]
-            ])
+            f"💰 Your Balance\n\nAvailable Balance: ৳{balance:.2f}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="home")]])
         )
 
-    # =====================================================
-    # SELL
-    # =====================================================
-
     elif data == "sell":
-
         count = get_today_file_count(user_id)
-
         if count >= DAILY_FILE_LIMIT:
-
             await query.edit_message_text(
-                "❌ Daily limit reached.\n\n"
-                f"You can submit maximum "
-                f"{DAILY_FILE_LIMIT} files per day.",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "⬅️ Back",
-                            callback_data="home"
-                        )
-                    ]
-                ])
+                f"❌ Daily limit reached.\n\nYou can submit maximum {DAILY_FILE_LIMIT} files per day.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="home")]])
             )
-
             return
 
         context.user_data["state"] = "waiting_file"
-
         await query.edit_message_text(
-            "📤 Send your file now.\n\n"
-            f"Today's submissions: "
-            f"{count}/{DAILY_FILE_LIMIT}\n\n"
+            f"📤 Send your Excel file (.xlsx, .xls, .csv) containing Gmail addresses now.\n\n"
+            f"Today's submissions: {count}/{DAILY_FILE_LIMIT}\n\n"
             f"Approved file reward: ৳{REWARD_PER_FILE}"
         )
 
-    # =====================================================
-    # WITHDRAW
-    # =====================================================
-
     elif data == "withdraw":
-
         balance = get_balance(user_id)
-
         if balance < MIN_WITHDRAW:
-
             await query.edit_message_text(
-                "❌ Minimum withdrawal is ৳50.\n\n"
-                f"Your current balance: ৳{balance:.2f}",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "⬅️ Back",
-                            callback_data="home"
-                        )
-                    ]
-                ])
+                f"❌ Minimum withdrawal is ৳{MIN_WITHDRAW}.\n\nYour current balance: ৳{balance:.2f}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="home")]])
             )
-
             return
 
         context.user_data["state"] = "withdraw_amount"
-
         await query.edit_message_text(
-            "💸 Withdrawal\n\n"
-            f"Available Balance: ৳{balance:.2f}\n"
-            f"Minimum Withdrawal: ৳{MIN_WITHDRAW}\n"
-            f"Fee: {WITHDRAW_FEE_PERCENT}%\n\n"
-            "Enter the amount you want to withdraw:"
+            f"💸 Withdrawal\n\nAvailable Balance: ৳{balance:.2f}\nMinimum Withdrawal: ৳{MIN_WITHDRAW}\nFee: {WITHDRAW_FEE_PERCENT}%\n\nEnter the amount you want to withdraw:"
         )
-
-    # =====================================================
-    # HOME
-    # =====================================================
 
     elif data == "home":
-
         context.user_data.clear()
-
         await show_main_menu(update, context)
 
-    # =====================================================
-    # ADMIN PANEL
-    # =====================================================
-
     elif data == "admin_panel":
-
-        if user_id != ADMIN_ID:
+        if user_id != admin_id:
             return
-
         await show_admin_panel(query)
-
-    # =====================================================
-    # ADMIN ADD BUTTON
-    # =====================================================
 
     elif data == "admin_add_button":
-
-        if user_id != ADMIN_ID:
+        if user_id != admin_id:
             return
-
         context.user_data["state"] = "admin_add_button_title"
-
-        await query.edit_message_text(
-            "➕ Add New Button\n\n"
-            "First send the button name.\n\n"
-            "Example:\n"
-            "📢 Our Channel"
-        )
-
-    # =====================================================
-    # ADMIN REMOVE BUTTON
-    # =====================================================
+        await query.edit_message_text("➕ Add New Button\n\nFirst send the button name.\n\nExample:\n📢 Our Channel")
 
     elif data == "admin_remove_button":
-
-        if user_id != ADMIN_ID:
+        if user_id != admin_id:
             return
-
-        buttons = db_execute(
-            "SELECT * FROM buttons ORDER BY id DESC",
-            fetchall=True
-        )
-
+        buttons = db_execute("SELECT * FROM buttons ORDER BY id DESC", fetchall=True)
         if not buttons:
-
             await query.edit_message_text(
                 "There are no custom buttons.",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "⬅️ Back",
-                            callback_data="admin_panel"
-                        )
-                    ]
-                ])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]])
             )
-
             return
 
-        keyboard = []
-
-        for b in buttons:
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"❌ {b['title']}",
-                    callback_data=f"delete_button:{b['id']}"
-                )
-            ])
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "⬅️ Back",
-                callback_data="admin_panel"
-            )
-        ])
-
-        await query.edit_message_text(
-            "🗑 Select a button to remove:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    # =====================================================
-    # ADMIN BROADCAST
-    # =====================================================
+        keyboard = [[InlineKeyboardButton(f"❌ {b['title']}", callback_data=f"delete_button:{b['id']}")] for b in buttons]
+        keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")])
+        await query.edit_message_text("🗑 Select a button to remove:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "admin_broadcast":
-
-        if user_id != ADMIN_ID:
+        if user_id != admin_id:
             return
-
         context.user_data["state"] = "admin_broadcast"
-
-        await query.edit_message_text(
-            "📢 Broadcast Post\n\n"
-            "Send the message you want to send to all users."
-        )
-
-    # =====================================================
-    # ADMIN SINGLE MESSAGE
-    # =====================================================
+        await query.edit_message_text("📢 Broadcast Post\n\nSend the message you want to send to all users.")
 
     elif data == "admin_single_message":
-
-        if user_id != ADMIN_ID:
+        if user_id != admin_id:
             return
-
         context.user_data["state"] = "admin_single_user"
-
-        await query.edit_message_text(
-            "✉️ Single User Message\n\n"
-            "Send the Telegram User ID first."
-        )
-
-    # =====================================================
-    # ADMIN STATS
-    # =====================================================
+        await query.edit_message_text("✉️ Single User Message\n\nSend the Telegram User ID first.")
 
     elif data == "admin_stats":
-
-        if user_id != ADMIN_ID:
+        if user_id != admin_id:
             return
-
-        users = db_execute(
-            "SELECT COUNT(*) AS c FROM users",
-            fetchone=True
-        )["c"]
-
-        total_balance = db_execute(
-            """
-            SELECT COALESCE(SUM(balance),0) AS total
-            FROM users
-            """,
-            fetchone=True
-        )["total"]
-
-        pending = db_execute(
-            """
-            SELECT COUNT(*) AS c
-            FROM withdrawals
-            WHERE status='pending'
-            """,
-            fetchone=True
-        )["c"]
-
-        pending_files = db_execute(
-            """
-            SELECT COUNT(*) AS c
-            FROM submissions
-            WHERE status='pending'
-            """,
-            fetchone=True
-        )["c"]
+        users = db_execute("SELECT COUNT(*) AS c FROM users", fetchone=True)["c"]
+        total_balance = db_execute("SELECT COALESCE(SUM(balance),0) AS total FROM users", fetchone=True)["total"]
+        pending = db_execute("SELECT COUNT(*) AS c FROM withdrawals WHERE status='pending'", fetchone=True)["c"]
+        pending_files = db_execute("SELECT COUNT(*) AS c FROM submissions WHERE status='pending'", fetchone=True)["c"]
 
         await query.edit_message_text(
-            "📊 Admin Statistics\n\n"
-            f"👤 Total Users: {users}\n"
-            f"💰 Total Balance: ৳{float(total_balance):.2f}\n"
-            f"💸 Pending Withdrawals: {pending}\n"
-            f"📁 Pending Files: {pending_files}",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "⬅️ Admin Panel",
-                        callback_data="admin_panel"
-                    )
-                ]
-            ])
+            f"📊 Admin Statistics\n\n👤 Total Users: {users}\n💰 Total Balance: ৳{float(total_balance):.2f}\n💸 Pending Withdrawals: {pending}\n📁 Pending Files: {pending_files}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
         )
 
-    # =====================================================
-    # APPROVE WITHDRAWAL
-    # =====================================================
-
-    elif data.startswith("approve_withdraw:"):
-
-        if user_id != ADMIN_ID:
+    # ================= SUBMISSION APPROVAL =================
+    elif data.startswith("approve_sub:"):
+        if user_id != admin_id:
+            return
+        sub_id = int(data.split(":")[1])
+        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not sub or sub["status"] != "pending":
+            await query.answer("Already processed.", show_alert=True)
             return
 
-        withdrawal_id = int(
-            data.split(":")[1]
-        )
-
-        withdrawal = db_execute(
-            """
-            SELECT *
-            FROM withdrawals
-            WHERE id=?
-            """,
-            (withdrawal_id,),
-            fetchone=True
-        )
-
-        if not withdrawal:
-
-            await query.answer(
-                "Withdrawal not found.",
-                show_alert=True
-            )
-
-            return
-
-        if withdrawal["status"] != "pending":
-
-            await query.answer(
-                "Already processed.",
-                show_alert=True
-            )
-
-            return
-
-        balance = get_balance(
-            withdrawal["user_id"]
-        )
-
-        if balance < float(withdrawal["amount"]):
-
-            db_execute(
-                """
-                UPDATE withdrawals
-                SET status='rejected'
-                WHERE id=?
-                """,
-                (withdrawal_id,)
-            )
-
-            await query.edit_message_text(
-                "❌ Withdrawal rejected automatically.\n\n"
-                "User does not have enough balance."
-            )
-
-            return
-
-        update_balance(
-            withdrawal["user_id"],
-            -float(withdrawal["amount"])
-        )
-
-        db_execute(
-            """
-            UPDATE withdrawals
-            SET status='approved'
-            WHERE id=?
-            """,
-            (withdrawal_id,)
-        )
-
-        await query.edit_message_text(
-            "✅ Withdrawal Approved\n\n"
-            f"Amount: ৳{withdrawal['amount']:.2f}\n"
-            f"Fee: ৳{withdrawal['fee']:.2f}\n"
-            f"User receives: "
-            f"৳{withdrawal['receive_amount']:.2f}"
-        )
-
+        db_execute("UPDATE submissions SET status='approved' WHERE id=?", (sub_id,))
+        update_balance(sub["user_id"], REWARD_PER_FILE)
+        await query.edit_message_text(f"✅ Submission #{sub_id} Approved! ৳{REWARD_PER_FILE} added to user.")
         try:
-
             await context.bot.send_message(
-                chat_id=withdrawal["user_id"],
-                text=(
-                    "✅ Your withdrawal has been approved.\n\n"
-                    f"Requested: "
-                    f"৳{withdrawal['amount']:.2f}\n"
-                    f"Fee: ৳{withdrawal['fee']:.2f}\n"
-                    f"Receive: "
-                    f"৳{withdrawal['receive_amount']:.2f}"
-                )
+                chat_id=sub["user_id"],
+                text=f"🎉 Your submitted file has been approved!\n৳{REWARD_PER_FILE} has been added to your balance."
             )
-
         except Exception:
             pass
 
-    # =====================================================
-    # REJECT WITHDRAWAL
-    # =====================================================
+    elif data.startswith("reject_sub:"):
+        if user_id != admin_id:
+            return
+        sub_id = int(data.split(":")[1])
+        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not sub or sub["status"] != "pending":
+            await query.answer("Already processed.", show_alert=True)
+            return
+
+        db_execute("UPDATE submissions SET status='rejected' WHERE id=?", (sub_id,))
+        await query.edit_message_text(f"❌ Submission #{sub_id} Rejected.")
+        try:
+            await context.bot.send_message(chat_id=sub["user_id"], text="❌ Your submitted file was rejected by admin.")
+        except Exception:
+            pass
+
+    # ================= WITHDRAWAL APPROVAL =================
+    elif data.startswith("approve_withdraw:"):
+        if user_id != admin_id:
+            return
+        withdrawal_id = int(data.split(":")[1])
+        withdrawal = db_execute("SELECT * FROM withdrawals WHERE id=?", (withdrawal_id,), fetchone=True)
+        if not withdrawal or withdrawal["status"] != "pending":
+            await query.answer("Already processed.", show_alert=True)
+            return
+
+        balance = get_balance(withdrawal["user_id"])
+        if balance < float(withdrawal["amount"]):
+            db_execute("UPDATE withdrawals SET status='rejected' WHERE id=?", (withdrawal_id,))
+            await query.edit_message_text("❌ Withdrawal rejected: User balance insufficient.")
+            return
+
+        update_balance(withdrawal["user_id"], -float(withdrawal["amount"]))
+        db_execute("UPDATE withdrawals SET status='approved' WHERE id=?", (withdrawal_id,))
+        await query.edit_message_text(f"✅ Withdrawal Approved.\nUser receives: ৳{withdrawal['receive_amount']:.2f}")
+
+        try:
+            await context.bot.send_message(
+                chat_id=withdrawal["user_id"],
+                text=f"✅ Your withdrawal has been approved.\nAmount: ৳{withdrawal['receive_amount']:.2f}"
+            )
+        except Exception:
+            pass
 
     elif data.startswith("reject_withdraw:"):
-
-        if user_id != ADMIN_ID:
+        if user_id != admin_id:
             return
-
-        withdrawal_id = int(
-            data.split(":")[1]
-        )
-
-        withdrawal = db_execute(
-            """
-            SELECT *
-            FROM withdrawals
-            WHERE id=?
-            """,
-            (withdrawal_id,),
-            fetchone=True
-        )
-
-        if not withdrawal:
-            return
-
-        if withdrawal["status"] != "pending":
-
-            await query.answer(
-                "Already processed.",
-                show_alert=True
-            )
-
-            return
-
-        db_execute(
-            """
-            UPDATE withdrawals
-            SET status='rejected'
-            WHERE id=?
-            """,
-            (withdrawal_id,)
-        )
-
-        await query.edit_message_text(
-            "❌ Withdrawal Rejected."
-        )
-
-        try:
-
-            await context.bot.send_message(
-                chat_id=withdrawal["user_id"],
-                text=(
-                    "❌ Your withdrawal request "
-                    "was rejected."
-                )
-            )
-
-        except Exception:
-            pass
-
-    # =====================================================
-    # DELETE BUTTON
-    # =====================================================
+        withdrawal_id = int(data.split(":")[1])
+        db_execute("UPDATE withdrawals SET status='rejected' WHERE id=?", (withdrawal_id,))
+        await query.edit_message_text("❌ Withdrawal Rejected.")
 
     elif data.startswith("delete_button:"):
-
-        if user_id != ADMIN_ID:
+        if user_id != admin_id:
             return
-
-        button_id = int(
-            data.split(":")[1]
-        )
-
-        db_execute(
-            "DELETE FROM buttons WHERE id=?",
-            (button_id,)
-        )
-
-        await query.answer(
-            "Button deleted."
-        )
-
+        button_id = int(data.split(":")[1])
+        db_execute("DELETE FROM buttons WHERE id=?", (button_id,))
+        await query.answer("Button deleted.")
         await show_admin_panel(query)
-
-
-# =========================================================
-# ADMIN COMMAND
-# =========================================================
-
-async def admin(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if update.effective_user.id != ADMIN_ID:
-
-        await update.message.reply_text(
-            "❌ You are not authorized."
-        )
-
-        return
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "👨‍💼 Open Admin Panel",
-                callback_data="admin_panel"
-            )
-        ]
-    ])
-
-    await update.message.reply_text(
-        "🔐 Admin access granted.",
-        reply_markup=keyboard
-    )
 
 
 # =========================================================
 # MESSAGE HANDLER
 # =========================================================
 
-async def message_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-
     if not user:
         return
 
     add_user(user)
-
     state = context.user_data.get("state")
+    admin_id = get_admin_id()
 
-    # =====================================================
-    # ADMIN ADD BUTTON - TITLE
-    # =====================================================
-
-    if (
-        user.id == ADMIN_ID
-        and state == "admin_add_button_title"
-    ):
-
-        if not update.message.text:
-            await update.message.reply_text(
-                "❌ Please send the button name as text."
-            )
-            return
-
-        context.user_data["button_title"] = (
-            update.message.text.strip()
-        )
-
-        context.user_data["state"] = (
-            "admin_add_button_url"
-        )
-
-        await update.message.reply_text(
-            "Now send the button URL.\n\n"
-            "Example:\n"
-            "https://t.me/yourchannel"
-        )
-
+    # Admin Add Button
+    if user.id == admin_id and state == "admin_add_button_title":
+        context.user_data["button_title"] = update.message.text.strip()
+        context.user_data["state"] = "admin_add_button_url"
+        await update.message.reply_text("Now send the button URL (e.g., https://t.me/yourchannel):")
         return
 
-    # =====================================================
-    # ADMIN ADD BUTTON - URL
-    # =====================================================
-
-    if (
-        user.id == ADMIN_ID
-        and state == "admin_add_button_url"
-    ):
-
-        if not update.message.text:
-            await update.message.reply_text(
-                "❌ Please send a valid URL."
-            )
-            return
-
-        title = context.user_data.get(
-            "button_title"
-        )
-
+    if user.id == admin_id and state == "admin_add_button_url":
         url = update.message.text.strip()
-
-        if not url.startswith(
-            ("http://", "https://", "tg://")
-        ):
-
-            await update.message.reply_text(
-                "❌ Invalid URL.\n\n"
-                "Please send a valid "
-                "https:// or Telegram URL."
-            )
-
+        if not url.startswith(("http://", "https://", "tg://")):
+            await update.message.reply_text("❌ Invalid URL. Send a valid URL.")
             return
-
-        db_execute(
-            """
-            INSERT INTO buttons
-            (title, url)
-            VALUES (?, ?)
-            """,
-            (
-                title,
-                url
-            )
-        )
-
+        title = context.user_data.get("button_title")
+        db_execute("INSERT INTO buttons (title, url) VALUES (?, ?)", (title, url))
         context.user_data.clear()
-
-        await update.message.reply_text(
-            "✅ Button added successfully.\n\n"
-            f"Button: {title}\n"
-            f"URL: {url}"
-        )
-
+        await update.message.reply_text(f"✅ Button added:\n{title} -> {url}")
         return
 
-    # =====================================================
-    # ADMIN BROADCAST
-    # =====================================================
-
-    if (
-        user.id == ADMIN_ID
-        and state == "admin_broadcast"
-    ):
-
-        if not update.message.text:
-
-            await update.message.reply_text(
-                "❌ Please send a text message."
-            )
-
-            return
-
-        users = db_execute(
-            "SELECT user_id FROM users",
-            fetchall=True
-        )
-
+    # Admin Broadcast
+    if user.id == admin_id and state == "admin_broadcast":
+        users = db_execute("SELECT user_id FROM users", fetchall=True)
         success = 0
-
         for u in users:
-
             try:
-
-                await context.bot.send_message(
-                    chat_id=u["user_id"],
-                    text=update.message.text
-                )
-
+                await context.bot.send_message(chat_id=u["user_id"], text=update.message.text)
                 success += 1
-
             except Exception:
                 pass
-
         context.user_data.clear()
-
-        await update.message.reply_text(
-            "📢 Broadcast completed.\n\n"
-            f"Sent successfully: "
-            f"{success}/{len(users)}"
-        )
-
+        await update.message.reply_text(f"📢 Broadcast completed: {success}/{len(users)}")
         return
 
-    # =====================================================
-    # ADMIN SINGLE MESSAGE - USER ID
-    # =====================================================
-
-    if (
-        user.id == ADMIN_ID
-        and state == "admin_single_user"
-    ):
-
+    # Admin Single Message
+    if user.id == admin_id and state == "admin_single_user":
         try:
-
-            target_id = int(
-                update.message.text.strip()
-            )
-
-        except (ValueError, AttributeError):
-
-            await update.message.reply_text(
-                "❌ Please send a valid "
-                "numeric Telegram User ID."
-            )
-
-            return
-
-        context.user_data["target_user"] = target_id
-
-        context.user_data["state"] = (
-            "admin_single_text"
-        )
-
-        await update.message.reply_text(
-            "Now send the message you want to send."
-        )
-
-        return
-
-    # =====================================================
-    # ADMIN SINGLE MESSAGE - TEXT
-    # =====================================================
-
-    if (
-        user.id == ADMIN_ID
-        and state == "admin_single_text"
-    ):
-
-        target_id = context.user_data.get(
-            "target_user"
-        )
-
-        try:
-
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=update.message.text
-            )
-
-            await update.message.reply_text(
-                "✅ Message sent successfully."
-            )
-
-        except Exception as e:
-
-            await update.message.reply_text(
-                "❌ Could not send message.\n\n"
-                f"{e}"
-            )
-
-        context.user_data.clear()
-
-        return
-
-    # =====================================================
-    # WITHDRAW AMOUNT
-    # =====================================================
-
-    if state == "withdraw_amount":
-
-        if not update.message.text:
-
-            await update.message.reply_text(
-                "❌ Please enter the amount."
-            )
-
-            return
-
-        text = update.message.text.strip()
-
-        try:
-
-            amount = float(text)
-
+            context.user_data["target_user"] = int(update.message.text.strip())
+            context.user_data["state"] = "admin_single_text"
+            await update.message.reply_text("Now send the message you want to send.")
         except ValueError:
+            await update.message.reply_text("❌ Send a valid numeric User ID.")
+        return
 
-            await update.message.reply_text(
-                "❌ Please enter a valid amount.\n\n"
-                "Example: 50, 56, 57, 100"
-            )
+    if user.id == admin_id and state == "admin_single_text":
+        target_id = context.user_data.get("target_user")
+        try:
+            await context.bot.send_message(chat_id=target_id, text=update.message.text)
+            await update.message.reply_text("✅ Message sent.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed to send: {e}")
+        context.user_data.clear()
+        return
 
+    # Withdraw Handling
+    if state == "withdraw_amount":
+        try:
+            amount = float(update.message.text.strip())
+        except ValueError:
+            await update.message.reply_text("❌ Enter a valid number.")
             return
 
         if amount < MIN_WITHDRAW:
-
-            await update.message.reply_text(
-                f"❌ Minimum withdrawal is "
-                f"৳{MIN_WITHDRAW}."
-            )
-
+            await update.message.reply_text(f"❌ Minimum withdrawal is ৳{MIN_WITHDRAW}.")
             return
 
         balance = get_balance(user.id)
-
         if amount > balance:
-
-            await update.message.reply_text(
-                "❌ Insufficient balance.\n\n"
-                f"Your balance: ৳{balance:.2f}\n"
-                f"You requested: ৳{amount:.2f}"
-            )
-
+            await update.message.reply_text(f"❌ Insufficient balance. Available: ৳{balance:.2f}")
             return
 
         fee = amount * WITHDRAW_FEE_PERCENT / 100
-
-        receive_amount = amount - fee
-
-        context.user_data["withdraw_amount"] = amount
-        context.user_data["withdraw_fee"] = fee
-        context.user_data["withdraw_receive"] = (
-            receive_amount
-        )
-
-        context.user_data["state"] = (
-            "withdraw_method"
-        )
+        receive = amount - fee
+        context.user_data.update({"withdraw_amount": amount, "withdraw_fee": fee, "withdraw_receive": receive})
+        context.user_data["state"] = "withdraw_method"
 
         keyboard = [
-
-            [
-                InlineKeyboardButton(
-                    "💳 bKash",
-                    callback_data="method_bkash"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    "💳 Nagad",
-                    callback_data="method_nagad"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    "💰 Binance",
-                    callback_data="method_binance"
-                )
-            ]
+            [InlineKeyboardButton("💳 bKash", callback_data="method_bkash")],
+            [InlineKeyboardButton("💳 Nagad", callback_data="method_nagad")],
+            [InlineKeyboardButton("💰 Binance", callback_data="method_binance")]
         ]
-
         await update.message.reply_text(
-            "💸 Withdrawal Summary\n\n"
-            f"Requested: ৳{amount:.2f}\n"
-            f"Fee (4%): ৳{fee:.2f}\n"
-            f"You receive: ৳{receive_amount:.2f}\n\n"
-            "Choose withdrawal method:",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
+            f"💸 Summary:\nAmount: ৳{amount:.2f}\nFee: ৳{fee:.2f}\nYou Receive: ৳{receive:.2f}\n\nSelect method:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-
         return
-
-    # =====================================================
-    # WITHDRAW ACCOUNT
-    # =====================================================
 
     if state == "withdraw_account":
-
-        if not update.message.text:
-
-            await update.message.reply_text(
-                "❌ Please send your account "
-                "number or wallet address."
-            )
-
-            return
-
         account = update.message.text.strip()
-
-        amount = context.user_data[
-            "withdraw_amount"
-        ]
-
-        fee = context.user_data[
-            "withdraw_fee"
-        ]
-
-        receive_amount = context.user_data[
-            "withdraw_receive"
-        ]
-
-        method = context.user_data[
-            "withdraw_method"
-        ]
+        amt = context.user_data["withdraw_amount"]
+        fee = context.user_data["withdraw_fee"]
+        rec = context.user_data["withdraw_receive"]
+        mth = context.user_data["withdraw_method"]
 
         db_execute("""
-            INSERT INTO withdrawals
-            (
-                user_id,
-                amount,
-                fee,
-                receive_amount,
-                method,
-                account,
-                status,
-                created_at
-            )
+            INSERT INTO withdrawals (user_id, amount, fee, receive_amount, method, account, status, created_at)
             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
-        """, (
-            user.id,
-            amount,
-            fee,
-            receive_amount,
-            method,
-            account,
-            datetime.now().isoformat()
-        ))
+        """, (user.id, amt, fee, rec, mth, account, datetime.now().isoformat()))
 
-        withdrawal_id = db_execute(
-            """
-            SELECT last_insert_rowid() AS id
-            """,
-            fetchone=True
-        )["id"]
-
+        w_id = db_execute("SELECT last_insert_rowid() AS id", fetchone=True)["id"]
         context.user_data.clear()
+        await update.message.reply_text("✅ Withdrawal request submitted! Waiting for admin approval.")
 
-        await update.message.reply_text(
-            "✅ Withdrawal request submitted!\n\n"
-            f"Amount: ৳{amount:.2f}\n"
-            f"Fee: ৳{fee:.2f}\n"
-            f"You receive: "
-            f"৳{receive_amount:.2f}\n"
-            f"Method: {method}\n\n"
-            "⏳ Waiting for admin approval."
-        )
-
-        keyboard = InlineKeyboardMarkup([
-
-            [
-                InlineKeyboardButton(
-                    "✅ Approve",
-                    callback_data=(
-                        f"approve_withdraw:{withdrawal_id}"
-                    )
-                ),
-
-                InlineKeyboardButton(
-                    "❌ Reject",
-                    callback_data=(
-                        f"reject_withdraw:{withdrawal_id}"
-                    )
-                )
-            ]
-
-        ])
-
-        await context.bot.send_message(
-
-            chat_id=ADMIN_ID,
-
-            text=(
-                "🔔 NEW WITHDRAWAL REQUEST\n\n"
-
-                f"User: "
-                f"@{user.username or 'No username'}\n"
-
-                f"User ID: {user.id}\n\n"
-
-                f"Amount: ৳{amount:.2f}\n"
-
-                f"Fee: ৳{fee:.2f}\n"
-
-                f"User receives: "
-                f"৳{receive_amount:.2f}\n\n"
-
-                f"Method: {method}\n"
-
-                f"Account: {account}"
-            ),
-
-            reply_markup=keyboard
-        )
-
+        if admin_id:
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Approve", callback_data=f"approve_withdraw:{w_id}"),
+                 InlineKeyboardButton("❌ Reject", callback_data=f"reject_withdraw:{w_id}")]
+            ])
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=f"🔔 NEW WITHDRAWAL REQUEST\n\nUser: @{user.username or 'No username'} ({user.id})\nAmount: ৳{amt:.2f}\nReceive: ৳{rec:.2f}\nMethod: {mth}\nAccount: {account}",
+                reply_markup=keyboard
+            )
         return
 
-    # =====================================================
-    # FILE SUBMISSION
-    # =====================================================
-
+    # File Submission with Excel / Gmail Validation
     if state == "waiting_file":
-
-        count = get_today_file_count(user.id)
-
-        if count >= DAILY_FILE_LIMIT:
-
-            context.user_data.clear()
-
-            await update.message.reply_text(
-                "❌ Daily file limit reached."
-            )
-
+        doc = update.message.document
+        if not doc:
+            await update.message.reply_text("❌ অনুগ্রহ করে এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।")
             return
 
-        file_id = None
-
-        if update.message.document:
-
-            file_id = update.message.document.file_id
-
-        elif update.message.photo:
-
-            file_id = (
-                update.message.photo[-1].file_id
-            )
-
-        elif update.message.video:
-
-            file_id = update.message.video.file_id
-
-        else:
-
-            await update.message.reply_text(
-                "❌ Please send a file."
-            )
-
+        file_name = doc.file_name.lower()
+        if not (file_name.endswith(".xlsx") or file_name.endswith(".xls") or file_name.endswith(".csv")):
+            await update.message.reply_text("❌ শুধুমাত্র Excel (.xlsx, .xls) অথবা CSV (.csv) ফাইল গ্রহণ করা হয়।")
             return
 
+        # ফাইল ডাউনলোড করে জিমেইল ফরম্যাট চেক
+        os.makedirs("downloads", exist_ok=True)
+        local_path = os.path.join("downloads", f"{user.id}_{doc.file_name}")
+        tg_file = await doc.get_file()
+        await tg_file.download_to_drive(local_path)
+
+        try:
+            total_found, valid_count, sample_list = validate_gmail_file(local_path)
+        except Exception as e:
+            if os.path.exists(local_path):
+                os.remove(local_path)
+            await update.message.reply_text(f"❌ ফাইল পড়তে সমস্যা হয়েছে: {e}")
+            return
+
+        if os.path.exists(local_path):
+            os.remove(local_path)
+
+        if valid_count == 0:
+            await update.message.reply_text(
+                "❌ ফাইলে কোনো ভ্যালিড Gmail অ্যাড্রেস (@gmail.com) পাওয়া যায়নি। ফরম্যাট ঠিক করে আবার পাঠান।"
+            )
+            return
+
+        # ডাটাবেজে সাবমিশন সেভ
         db_execute("""
-            INSERT INTO submissions
-            (
-                user_id,
-                file_id,
-                status,
-                created_at
-            )
-            VALUES (?, ?, 'pending', ?)
-        """, (
-            user.id,
-            file_id,
-            datetime.now().isoformat()
-        ))
+            INSERT INTO submissions (user_id, file_id, valid_emails, status, created_at)
+            VALUES (?, ?, ?, 'pending', ?)
+        """, (user.id, doc.file_id, valid_count, datetime.now().isoformat()))
 
+        sub_id = db_execute("SELECT last_insert_rowid() AS id", fetchone=True)["id"]
         increase_file_count(user.id)
-
         context.user_data.clear()
 
         await update.message.reply_text(
-            "✅ File submitted successfully.\n\n"
-            "⏳ Waiting for admin review."
+            f"✅ ফাইল গৃহীত হয়েছে!\n\n"
+            f"🔍 মোট জিমেইল পাওয়া গেছে: {valid_count} টি\n"
+            f"⏳ অ্যাডমিন ভেরিফাই করার পর আপনার ব্যালেন্সে ৳{REWARD_PER_FILE} যোগ হবে।"
         )
 
+        # অ্যাডমিনের কাছে ফাইল ও রিপোর্ট পাঠানো
+        if admin_id:
+            sample_str = "\n".join(sample_list)
+            admin_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Approve", callback_data=f"approve_sub:{sub_id}"),
+                 InlineKeyboardButton("❌ Reject", callback_data=f"reject_sub:{sub_id}")]
+            ])
+            caption = (
+                f"📁 NEW GMAIL FILE SUBMISSION (#{sub_id})\n\n"
+                f"👤 User: @{user.username or 'No username'} ({user.id})\n"
+                f"✉️ ভ্যালিড Gmail সংখ্যা: {valid_count}\n"
+                f"📋 নমুনা (Sample):\n{sample_str}"
+            )
+            await context.bot.send_document(
+                chat_id=admin_id,
+                document=doc.file_id,
+                caption=caption,
+                reply_markup=admin_kb
+            )
         return
 
-    # =====================================================
-    # DEFAULT
-    # =====================================================
-
-    await update.message.reply_text(
-        "Please use the buttons in the menu.\n\n"
-        "Send /start to open the menu."
-    )
+    await update.message.reply_text("Please use the buttons in the menu.\nSend /start to open the menu.")
 
 
-# =========================================================
-# WITHDRAW METHOD
-# =========================================================
-
-async def withdrawal_method_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def withdrawal_method_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-
     await query.answer()
-
     if query.data.startswith("method_"):
-
-        method = (
-            query.data
-            .replace("method_", "")
-            .capitalize()
-        )
-
+        method = query.data.replace("method_", "").capitalize()
         context.user_data["withdraw_method"] = method
-
-        context.user_data["state"] = (
-            "withdraw_account"
-        )
-
-        await query.edit_message_text(
-            f"💳 Selected: {method}\n\n"
-            "Now send your account number / "
-            "wallet address."
-        )
+        context.user_data["state"] = "withdraw_account"
+        await query.edit_message_text(f"💳 Selected: {method}\n\nNow send your account number / wallet address.")
 
 
 # =========================================================
@@ -1485,68 +707,24 @@ async def withdrawal_method_handler(
 # =========================================================
 
 def main():
-
     init_db()
 
-    # Start Render HTTP server
-    web_thread = threading.Thread(
-        target=run_web_server,
-        daemon=True
-    )
-
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
 
-    # Start Telegram bot
-    application = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .build()
-    )
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    application.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
-    )
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("admin", admin))
+    application.add_handler(CommandHandler("setadmin", set_admin_cmd))  # নতুন অ্যাডমিন সেট কমান্ড
 
-    application.add_handler(
-        CommandHandler(
-            "admin",
-            admin
-        )
-    )
-
-    application.add_handler(
-        CallbackQueryHandler(
-            withdrawal_method_handler,
-            pattern=r"^method_"
-        )
-    )
-
-    application.add_handler(
-        CallbackQueryHandler(
-            button_handler
-        )
-    )
-
-    application.add_handler(
-        MessageHandler(
-            filters.ALL & ~filters.COMMAND,
-            message_handler
-        )
-    )
+    application.add_handler(CallbackQueryHandler(withdrawal_method_handler, pattern=r"^method_"))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, message_handler))
 
     print("Telegram bot is running...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES
-    )
-
-
-# =========================================================
-# RUN
-# =========================================================
 
 if __name__ == "__main__":
     main()
