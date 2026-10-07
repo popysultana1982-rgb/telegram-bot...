@@ -5,7 +5,7 @@ import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import openpyxl  # এক্সেল ফাইল পড়ার জন্য: pip install openpyxl
+import openpyxl
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -29,8 +29,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN environment variable is not set.")
 
-# টেলিগ্রাম থেকে সরাসরি সেট করার জন্য একটি গোপন পাসওয়ার্ড
-# টেলিগ্রামে গিয়ে কমান্ড দেবেন: /setadmin mysecretadmin123
+# এই পাসওয়ার্ডটি দিয়ে টেলিগ্রাম থেকে অ্যাডমিন হবেন
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "mysecretadmin123")
 
 MIN_WITHDRAW = 50
@@ -257,7 +256,7 @@ async def show_main_menu(update, context):
 
 
 # =========================================================
-# START & ADMIN SETUP COMMANDS
+# COMMAND HANDLERS
 # =========================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -279,19 +278,101 @@ async def set_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ সফল হয়েছে! আপনার আইডি ({user_id}) এখন অ্যাডমিন হিসেবে সেট করা হয়েছে।\nএখন /admin লিখে প্যানেল ওপেন করুন।"
         )
     else:
-        await update.message.reply_text("❌ পাসওয়ার্ড ভুল!")
+        await update.message.reply_text("❌ গোপন পাসওয়ার্ডটি ভুল!")
 
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = get_admin_id()
     if not admin_id or update.effective_user.id != admin_id:
-        await update.message.reply_text("❌ You are not authorized.\nঅ্যাডমিন সেট করতে `/setadmin <key>` ব্যবহার করুন।")
+        await update.message.reply_text("❌ You are not authorized.\nপ্রথমে নিজেকে অ্যাডমিন করতে `/setadmin <key>` কমান্ড পাঠান।")
         return
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("👨‍💼 Open Admin Panel", callback_data="admin_panel")]
     ])
     await update.message.reply_text("🔐 Admin access granted.", reply_markup=keyboard)
+
+
+async def add_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = get_admin_id()
+    if update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ You are not authorized.")
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text("ব্যবহার নিয়ম: `/addbalance <user_id> <amount>`\nউদাহরণ: `/addbalance 123456789 50`")
+        return
+
+    try:
+        target_user_id = int(context.args[0])
+        amount = float(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ ইউজার আইডি এবং টাকার পরিমাণ সংখ্যায় হতে হবে।")
+        return
+
+    user = get_user(target_user_id)
+    if not user:
+        await update.message.reply_text("❌ এই আইডির কোনো ইউজার পাওয়া যায়নি।")
+        return
+
+    update_balance(target_user_id, amount)
+    new_balance = get_balance(target_user_id)
+
+    await update.message.reply_text(
+        f"✅ ব্যালেন্স যোগ হয়েছে!\n\n"
+        f"👤 ইউজার ID: {target_user_id}\n"
+        f"➕ যোগ: ৳{amount:.2f}\n"
+        f"💰 বর্তমান মোট ব্যালেন্স: ৳{new_balance:.2f}"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=f"🎁 আপনার অ্যাকাউন্টে ৳{amount:.2f} যোগ করা হয়েছে!\nআপনার বর্তমান ব্যালেন্স: ৳{new_balance:.2f}"
+        )
+    except Exception:
+        pass
+
+
+async def cut_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = get_admin_id()
+    if update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ You are not authorized.")
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text("ব্যবহার নিয়ম: `/cutbalance <user_id> <amount>`\nউদাহরণ: `/cutbalance 123456789 20`")
+        return
+
+    try:
+        target_user_id = int(context.args[0])
+        amount = float(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ ইউজার আইডি এবং টাকার পরিমাণ সংখ্যায় হতে হবে।")
+        return
+
+    user = get_user(target_user_id)
+    if not user:
+        await update.message.reply_text("❌ এই আইডির কোনো ইউজার পাওয়া যায়নি।")
+        return
+
+    update_balance(target_user_id, -amount)
+    new_balance = get_balance(target_user_id)
+
+    await update.message.reply_text(
+        f"✂️ ব্যালেন্স কেটে নেওয়া হয়েছে!\n\n"
+        f"👤 ইউজার ID: {target_user_id}\n"
+        f"➖ কাটা হয়েছে: ৳{amount:.2f}\n"
+        f"💰 বর্তমান মোট ব্যালেন্স: ৳{new_balance:.2f}"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=f"⚠️ আপনার অ্যাকাউন্ট থেকে ৳{amount:.2f} কেটে নেওয়া হয়েছে।\nআপনার বর্তমান ব্যালেন্স: ৳{new_balance:.2f}"
+        )
+    except Exception:
+        pass
 
 
 async def show_admin_panel(query):
@@ -410,7 +491,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
         )
 
-    # ================= SUBMISSION APPROVAL =================
+    # Submission Approval
     elif data.startswith("approve_sub:"):
         if user_id != admin_id:
             return
@@ -447,7 +528,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    # ================= WITHDRAWAL APPROVAL =================
+    # Withdrawal Approval
     elif data.startswith("approve_withdraw:"):
         if user_id != admin_id:
             return
@@ -617,7 +698,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # File Submission with Excel / Gmail Validation
+    # File Submission
     if state == "waiting_file":
         doc = update.message.document
         if not doc:
@@ -629,7 +710,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ শুধুমাত্র Excel (.xlsx, .xls) অথবা CSV (.csv) ফাইল গ্রহণ করা হয়।")
             return
 
-        # ফাইল ডাউনলোড করে জিমেইল ফরম্যাট চেক
         os.makedirs("downloads", exist_ok=True)
         local_path = os.path.join("downloads", f"{user.id}_{doc.file_name}")
         tg_file = await doc.get_file()
@@ -652,7 +732,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # ডাটাবেজে সাবমিশন সেভ
         db_execute("""
             INSERT INTO submissions (user_id, file_id, valid_emails, status, created_at)
             VALUES (?, ?, ?, 'pending', ?)
@@ -668,7 +747,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⏳ অ্যাডমিন ভেরিফাই করার পর আপনার ব্যালেন্সে ৳{REWARD_PER_FILE} যোগ হবে।"
         )
 
-        # অ্যাডমিনের কাছে ফাইল ও রিপোর্ট পাঠানো
         if admin_id:
             sample_str = "\n".join(sample_list)
             admin_kb = InlineKeyboardMarkup([
@@ -716,7 +794,9 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
-    application.add_handler(CommandHandler("setadmin", set_admin_cmd))  # নতুন অ্যাডমিন সেট কমান্ড
+    application.add_handler(CommandHandler("setadmin", set_admin_cmd))
+    application.add_handler(CommandHandler("addbalance", add_balance_cmd))
+    application.add_handler(CommandHandler("cutbalance", cut_balance_cmd))
 
     application.add_handler(CallbackQueryHandler(withdrawal_method_handler, pattern=r"^method_"))
     application.add_handler(CallbackQueryHandler(button_handler))
