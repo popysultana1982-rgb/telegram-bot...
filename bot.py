@@ -38,7 +38,8 @@ WITHDRAW_FEE_PERCENT = 4
 REWARD_PER_FILE = 25
 DAILY_FILE_LIMIT = 5
 
-# ১ ডলার = ১২৪ টাকা
+# রেফারেল বোনাস এবং ডলার রেট
+REFERRAL_BONUS = 5.0
 USDT_RATE = 124.0
 
 DB_NAME = "bot.db"
@@ -93,6 +94,7 @@ def init_db():
             balance REAL DEFAULT 0,
             files_today INTEGER DEFAULT 0,
             last_file_date TEXT,
+            referred_by INTEGER DEFAULT NULL,
             created_at TEXT
         )
     """)
@@ -159,15 +161,17 @@ def set_admin_id(user_id):
     """, (str(user_id),))
 
 
-def add_user(user):
-    existing = db_execute("SELECT user_id FROM users WHERE user_id=?", (user.id,), fetchone=True)
+def add_user(user, referrer_id=None):
+    existing = db_execute("SELECT * FROM users WHERE user_id=?", (user.id,), fetchone=True)
     if not existing:
         db_execute("""
-            INSERT INTO users (user_id, username, balance, files_today, last_file_date, created_at)
-            VALUES (?, ?, 0, 0, ?, ?)
-        """, (user.id, user.username or "", datetime.now().strftime("%Y-%m-%d"), datetime.now().isoformat()))
+            INSERT INTO users (user_id, username, balance, files_today, last_file_date, referred_by, created_at)
+            VALUES (?, ?, 0, 0, ?, ?, ?)
+        """, (user.id, user.username or "", datetime.now().strftime("%Y-%m-%d"), referrer_id, datetime.now().isoformat()))
+        return True  # নতুন ইউজার
     else:
         db_execute("UPDATE users SET username=? WHERE user_id=?", (user.username or "", user.id))
+        return False  # পুরাতন ইউজার
 
 
 def get_user(user_id):
@@ -181,6 +185,11 @@ def get_balance(user_id):
 
 def update_balance(user_id, amount):
     db_execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (amount, user_id))
+
+
+def get_referral_count(user_id):
+    res = db_execute("SELECT COUNT(*) AS c FROM users WHERE referred_by=?", (user_id,), fetchone=True)
+    return res["c"] if res else 0
 
 
 def get_today_file_count(user_id):
@@ -203,13 +212,8 @@ def increase_file_count(user_id):
 # VALIDATIONS (BD PHONE, BINANCE UID & STRICT GMAIL)
 # =========================================================
 
-# ১১ ডিজিটের বাংলাদেশি ফোন নম্বর (013 - 019)
 BD_PHONE_REGEX = re.compile(r"^01[3-9]\d{8}$")
-
-# বাইনান্স ইউআইডি (শুধুমাত্র সংখ্যা, সাধারণত ৭ থেকে ১০ ডিজিট)
 BINANCE_UID_REGEX = re.compile(r"^\d{7,10}$")
-
-# শুধুমাত্র @gmail.com
 GMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@gmail\.com$", re.IGNORECASE)
 
 
@@ -237,14 +241,38 @@ def validate_gmail_file(file_path):
 
 
 # =========================================================
-# MAIN MENU (REPLY KEYBOARD AT BOTTOM)
+# RULES & WELCOME TEXT
+# =========================================================
+
+def get_rules_text(user_name):
+    return (
+        f"আসসালামু আলাইকুম, {user_name}! 🌸\n\n"
+        "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
+        "আপনি আমাদের বটে নতুন এসেছেন। এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করতে পারবেন।\n\n"
+        "📌 গুরুত্বপূর্ণ নিয়মাবলি:\n"
+        "🔹 প্রতিদিন সর্বোচ্চ ৫টি Gmail Account সাবমিট করতে পারবেন।\n"
+        "🔹 প্রতিটি Gmail অবশ্যই Valid এবং ব্যবহারযোগ্য হতে হবে।\n"
+        "🔹 Gmail সাবমিট করার পর সর্বোচ্চ ২৪ ঘণ্টার মধ্যে আপনার Gmail রিসিভ করা হবে।\n"
+        "🔹 Gmail রিসিভ হওয়ার পর অ্যাডমিন আপনাকে মেসেজের মাধ্যমে জানিয়ে দেবে যে আপনার Gmail রিসিভ হয়েছে।\n"
+        "🔹 অ্যাডমিন রিসিভ করার সময় থেকে পরবর্তী ২৪ ঘণ্টা Gmail-এর স্ট্যাটাস পর্যবেক্ষণ করা হবে।\n"
+        "🔹 ২৪ ঘণ্টা পর যে Gmail Accountগুলো ঠিক থাকবে/নষ্ট হবে না, সেই Gmailগুলোর টাকা আপনার Balance-এ অটোমেটিক যোগ হয়ে যাবে। 💰\n"
+        "🔹 আর যে Gmail Accountগুলো নষ্ট হয়ে যাবে, সেগুলোর জন্য টাকা যোগ হবে না এবং সেই Gmail Accountগুলো আপনাকে ফেরত দেওয়া হবে।\n\n"
+        "⚠️ দয়া করে শুধু Valid Gmail Account সাবমিট করুন এবং উপরের নিয়মগুলো মেনে চলুন।\n\n"
+        "💚 ধন্যবাদ আমাদের সাথে থাকার জন্য।\n"
+        "সুন্দর ও নিরাপদ লেনদেনের শুভকামনা!"
+    )
+
+
+# =========================================================
+# MAIN MENU (BOTTOM KEYBOARD WITH RULES)
 # =========================================================
 
 def get_bottom_keyboard():
     keyboard = [
-        [KeyboardButton("📤 নিউ ফ্রেশ জিমেইল একাউন্ট সেল")],
-        [KeyboardButton("💰 ব্যালেন্স"), KeyboardButton("💸 উইথড্র")],
-        [KeyboardButton("📞 সাপোর্ট")]
+        [KeyboardButton("📤 SELL FRESH GMAIL ACCOUNT")],
+        [KeyboardButton("💰 BALANCE"), KeyboardButton("💸 WITHDRAW")],
+        [KeyboardButton("👥 REFERRAL"), KeyboardButton("📜 RULES")],
+        [KeyboardButton("📞 SUPPORT")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -255,13 +283,19 @@ async def show_main_menu(update, context):
     balance_bdt = get_balance(user.id)
     balance_usdt = balance_bdt / USDT_RATE
 
-    text = (
-        f"🤖 স্বাগতম!\n\n"
-        f"💰 আপনার বর্তমান ব্যালেন্স:\n"
+    name = user.first_name or "User"
+    welcome_msg = get_rules_text(name)
+
+    balance_text = (
+        f"\n\n═══════════════════\n"
+        f"💰 Available Balance:\n"
         f"🔹 ৳{balance_bdt:.2f} BDT\n"
-        f"🔹 ${balance_usdt:.2f} USDT\n\n"
+        f"🔹 ${balance_usdt:.2f} USDT\n"
+        f"═══════════════════\n\n"
         f"নিচের বাটনগুলো চেপে অপশন নির্বাচন করুন:"
     )
+
+    full_text = welcome_msg + balance_text
 
     buttons = db_execute("SELECT * FROM buttons ORDER BY id DESC", fetchall=True)
     inline_kb = None
@@ -270,13 +304,13 @@ async def show_main_menu(update, context):
         inline_kb = InlineKeyboardMarkup(kb_list)
 
     if update.callback_query:
-        await update.callback_query.message.reply_text(text, reply_markup=get_bottom_keyboard())
+        await update.callback_query.message.reply_text(full_text, reply_markup=get_bottom_keyboard())
         if inline_kb:
-            await update.callback_query.message.reply_text("গুরুত্বপূর্ণ লিংকসমূহ:", reply_markup=inline_kb)
+            await update.callback_query.message.reply_text("Important Links:", reply_markup=inline_kb)
     else:
-        await update.message.reply_text(text, reply_markup=get_bottom_keyboard())
+        await update.message.reply_text(full_text, reply_markup=get_bottom_keyboard())
         if inline_kb:
-            await update.message.reply_text("গুরুত্বপূর্ণ লিংকসমূহ:", reply_markup=inline_kb)
+            await update.message.reply_text("Important Links:", reply_markup=inline_kb)
 
 
 # =========================================================
@@ -284,8 +318,40 @@ async def show_main_menu(update, context):
 # =========================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    add_user(update.effective_user)
+    user = update.effective_user
     context.user_data.clear()
+
+    # রেফারেল ট্র্যাকিং
+    referrer_id = None
+    if context.args and len(context.args) > 0:
+        try:
+            potential_ref = int(context.args[0])
+            if potential_ref != user.id:
+                if get_user(potential_ref):
+                    referrer_id = potential_ref
+        except ValueError:
+            referrer_id = None
+
+    is_new = add_user(user, referrer_id)
+
+    # নতুন ইউজার রেফারেল বোনাস
+    if is_new and referrer_id:
+        update_balance(referrer_id, REFERRAL_BONUS)
+        ref_new_bdt = get_balance(referrer_id)
+        ref_new_usdt = ref_new_bdt / USDT_RATE
+        try:
+            await context.bot.send_message(
+                chat_id=referrer_id,
+                text=(
+                    f"🎉 অভিনন্দন! আপনার একটি রেফার সফল হয়েছে!\n\n"
+                    f"👤 নতুন ইউজার: @{user.username or 'No username'} ({user.id})\n"
+                    f"🎁 রেফারেল বোনাস: +৳{REFERRAL_BONUS:.2f} BDT\n"
+                    f"💰 বর্তমান ব্যালেন্স: ৳{ref_new_bdt:.2f} BDT (${ref_new_usdt:.2f} USDT)"
+                )
+            )
+        except Exception:
+            pass
+
     await show_main_menu(update, context)
 
 
@@ -586,7 +652,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         update_balance(withdrawal["user_id"], -float(withdrawal["amount"]))
         db_execute("UPDATE withdrawals SET status='approved' WHERE id=?", (withdrawal_id,))
-        
+
         receive_bdt = float(withdrawal['receive_amount'])
         receive_usdt = receive_bdt / USDT_RATE
 
@@ -601,7 +667,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             if withdrawal["method"] == "Binance":
                 msg_text += f" (${receive_usdt:.2f} USDT)"
-            msg_text += f"\n💳 মেথড: {withdrawal['method']}\n📌 অ্যাকাউন্ট/UID: {withdrawal['account']}"
+            msg_text += f"\n💳 মেথড: {withdrawal['method']}\n📌 একাউন্ট/UID: {withdrawal['account']}"
 
             await context.bot.send_message(chat_id=withdrawal["user_id"], text=msg_text)
         except Exception:
@@ -655,8 +721,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     admin_id = get_admin_id()
 
-    # --- বাটন অ্যাকশন ---
-    if text == "📤 নিউ ফ্রেশ জিমেইল একাউন্ট সেল":
+    # --- বাটন অ্যাকশনসমূহ ---
+    if text == "📤 SELL FRESH GMAIL ACCOUNT":
         count = get_today_file_count(user.id)
         if count >= DAILY_FILE_LIMIT:
             await update.message.reply_text(
@@ -673,38 +739,65 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    elif text == "💰 ব্যালেন্স":
+    elif text == "💰 BALANCE":
         balance_bdt = get_balance(user.id)
         balance_usdt = balance_bdt / USDT_RATE
+        ref_count = get_referral_count(user.id)
         await update.message.reply_text(
-            f"💰 আপনার বর্তমান ব্যালেন্স:\n"
-            f"🔹 ৳{balance_bdt:.2f} BDT\n"
-            f"🔹 ${balance_usdt:.2f} USDT"
+            f"💰 YOUR ACCOUNT BALANCE\n\n"
+            f"🔹 BDT Balance: ৳{balance_bdt:.2f} BDT\n"
+            f"🔹 USDT Balance: ${balance_usdt:.2f} USDT\n"
+            f"👥 Total Referrals: {ref_count} users"
         )
         return
 
-    elif text == "💸 উইথড্র":
+    elif text == "💸 WITHDRAW":
         balance_bdt = get_balance(user.id)
         balance_usdt = balance_bdt / USDT_RATE
         if balance_bdt < MIN_WITHDRAW:
             await update.message.reply_text(
                 f"❌ সর্বনিম্ন উইথড্র ৳{MIN_WITHDRAW} BDT।\n\n"
-                f"আপনার ব্যালেন্স: ৳{balance_bdt:.2f} BDT (${balance_usdt:.2f} USDT)"
+                f"আপনার বর্তমান ব্যালেন্স: ৳{balance_bdt:.2f} BDT (${balance_usdt:.2f} USDT)"
             )
             return
 
         context.user_data["state"] = "withdraw_amount"
         await update.message.reply_text(
-            f"💸 Withdrawal System\n\n"
-            f"💰 আপনার ব্যালেন্স: ৳{balance_bdt:.2f} BDT (${balance_usdt:.2f} USDT)\n"
-            f"🔹 সর্বনিম্ন উইথড্র: ৳{MIN_WITHDRAW} BDT\n"
-            f"🔹 ফি: {WITHDRAW_FEE_PERCENT}%\n"
-            f"🔹 ডলার রেট: $1 = ৳{USDT_RATE:.2f}\n\n"
+            f"💸 WITHDRAWAL SYSTEM\n\n"
+            f"💰 Available Balance: ৳{balance_bdt:.2f} BDT (${balance_usdt:.2f} USDT)\n"
+            f"🔹 Minimum Withdraw: ৳{MIN_WITHDRAW} BDT\n"
+            f"🔹 Fee: {WITHDRAW_FEE_PERCENT}%\n"
+            f"🔹 Dollar Rate: $1 = ৳{USDT_RATE:.2f}\n\n"
             f"কত টাকা (BDT) উইথড্র করতে চান? টাকার পরিমাণ লিখে পাঠান:"
         )
         return
 
-    elif text == "📞 সাপোর্ট":
+    elif text == "👥 REFERRAL":
+        bot_info = await context.bot.get_me()
+        bot_username = bot_info.username
+        referral_link = f"https://t.me/{bot_username}?start={user.id}"
+        ref_count = get_referral_count(user.id)
+        total_earned = ref_count * REFERRAL_BONUS
+
+        msg = (
+            f"👥 রেফার করে ইনকাম করুন!\n\n"
+            f"আপনি প্রতি সফল রেফারে পাবেন ৳{REFERRAL_BONUS:.2f} BDT বোনাস।\n"
+            f"আপনার বন্ধু বা অন্যদের কাছে আপনার রেফার লিংকটি শেয়ার করুন। কেউ এই লিংকে ক্লিক করে বটে যুক্ত হওয়ার সাথে সাথে আপনার অ্যাকাউন্টে টাকা যোগ হয়ে যাবে।\n\n"
+            f"🔗 আপনার রেফারেল লিংক:\n`{referral_link}`\n\n"
+            f"📊 আপনার রেফারেল পরিসংখ্যান:\n"
+            f"🔹 মোট রেফার করেছেন: {ref_count} জন\n"
+            f"🔹 রেফারেল থেকে আয়: ৳{total_earned:.2f} BDT"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+        return
+
+    elif text == "📜 RULES":
+        name = user.first_name or "User"
+        rules_msg = get_rules_text(name)
+        await update.message.reply_text(rules_msg)
+        return
+
+    elif text == "📞 SUPPORT":
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("💬 মেসেজ পাঠান", url="https://t.me/Talha_juba098")]
         ])
@@ -797,7 +890,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("💰 Binance (UID)", callback_data="method_binance")]
         ]
         await update.message.reply_text(
-            f"💸 উইথড্রয়াল সামারি:\n\n"
+            f"💸 WITHDRAWAL SUMMARY\n\n"
             f"🔹 উত্তোলনের পরিমাণ: ৳{amount:.2f} BDT\n"
             f"🔹 ফি ({WITHDRAW_FEE_PERCENT}%): ৳{fee:.2f} BDT\n"
             f"🔹 আপনি পাবেন: ৳{receive:.2f} BDT (${receive_usdt:.2f} USDT)\n\n"
@@ -941,7 +1034,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    await update.message.reply_text("নিচের বাটনগুলো চেপে অপশন নির্বাচন করুন।", reply_markup=get_bottom_keyboard())
+    await update.message.reply_text("Please use the buttons below.", reply_markup=get_bottom_keyboard())
 
 
 async def withdrawal_method_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
