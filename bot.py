@@ -188,8 +188,19 @@ def set_button_title(btn_key, new_title):
     """, (f"btn_{btn_key}", new_title))
 
 
+def get_custom_message(msg_key, default_text):
+    res = db_execute("SELECT value FROM settings WHERE key=?", (f"msg_{msg_key}",), fetchone=True)
+    return res["value"] if res else default_text
+
+
+def set_custom_message(msg_key, text):
+    db_execute("""
+        INSERT INTO settings (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value
+    """, (f"msg_{msg_key}", text))
+
+
 def clear_junk_cache():
-    # ডাউনলোড ফোল্ডারের ফাইল মুছে ফেলা
     deleted_files = 0
     if os.path.exists("downloads"):
         for filename in os.listdir("downloads"):
@@ -203,7 +214,6 @@ def clear_junk_cache():
                     deleted_files += 1
             except Exception:
                 pass
-    # ডেটাবেজ ক্যাশ অপ্টিমাইজেশন
     db_execute("VACUUM")
     return deleted_files
 
@@ -287,25 +297,37 @@ def validate_gmail_file(file_path):
 
 
 # =========================================================
-# RULES & TEXT
+# DEFAULT MESSAGES & TEMPLATES
 # =========================================================
 
+DEFAULT_RULES = (
+    "আসসালামু আলাইকুম, {name}! 🌸\n\n"
+    "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
+    "আপনি আমাদের বটে নতুন এসেছেন। এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করতে পারবেন।\n\n"
+    "📌 গুরুত্বপূর্ণ নিয়মাবলি:\n"
+    "🔹 প্রতিদিন সর্বোচ্চ ৫টি Gmail Account সাবমিট করতে পারবেন।\n"
+    "🔹 প্রতিটি Gmail অবশ্যই Valid এবং ব্যবহারযোগ্য হতে হবে।\n"
+    "🔹 Gmail সাবমিট করার পর সর্বোচ্চ ২৪ ঘণ্টার মধ্যে আপনার Gmail রিসিভ করা হবে।\n"
+    "🔹 Gmail রিসিভ হওয়ার পর অ্যাডমিন আপনাকে মেসেজের মাধ্যমে জানিয়ে দেবে যে আপনার Gmail রিসিভ হয়েছে।\n"
+    "🔹 অ্যাডমিন রিসিভ করার সময় থেকে পরবর্তী ২৪ ঘণ্টা Gmail-এর স্ট্যাটাস পর্যবেক্ষণ করা হবে।\n"
+    "🔹 ২৪ ঘণ্টা পর যে Gmail Accountগুলো ঠিক থাকবে/নষ্ট হবে না, সেই Gmailগুলোর টাকা আপনার Balance-এ অটোমেটিক যোগ হয়ে যাবে। 💰\n"
+    "🔹 আর যে Gmail Accountগুলো নষ্ট হয়ে যাবে, সেগুলোর জন্য টাকা যোগ হবে না এবং সেই Gmail Accountগুলো আপনাকে ফেরত দেওয়া হবে।\n\n"
+    "⚠️ দয়া করে শুধু Valid Gmail Account সাবমিট করুন এবং উপরের নিয়মগুলো মেনে চলুন।\n\n"
+    "💚 ধন্যবাদ আমাদের সাথে থাকার জন্য।\n"
+    "সুন্দর ও নিরাপদ লেনদেনের শুভকামনা!"
+)
+
+DEFAULT_SUPPORT = "যে কোনো সমস্যা বা সহযোগিতার জন্য সরাসরি সাপোর্টে যোগাযোগ করুন:"
+DEFAULT_MAINTENANCE = (
+    "⚠️ **বট আপডেটের কাজ চলছে!** 🛠\n\n"
+    "সম্মানিত ইউজার, আমাদের সিস্টেমে জরুরি আপডেটের কাজ চলছে। "
+    "সাময়িকভাবে বটের কার্যক্রম স্থগিত রয়েছে। কাজ সম্পন্ন হওয়ামাত্রই বট পুনরায় চালু হবে।"
+)
+
+
 def get_rules_text(user_name):
-    return (
-        f"আসসালামু আলাইকুম, {user_name}! 🌸\n\n"
-        "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
-        "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করতে পারবেন।\n\n"
-        "📌 গুরুত্বপূর্ণ নিয়মাবলি:\n"
-        "🔹 প্রতিদিন সর্বোচ্চ ৫টি Gmail Account সাবমিট করতে পারবেন।\n"
-        "🔹 প্রতিটি Gmail অবশ্যই Valid এবং ব্যবহারযোগ্য হতে হবে।\n"
-        "🔹 Gmail সাবমিট করার পর সর্বোচ্চ ২৪ ঘণ্টার মধ্যে আপনার Gmail রিসিভ করা হবে।\n"
-        "🔹 Gmail রিসিভ হওয়ার পর অ্যাডমিন আপনাকে মেসেজের মাধ্যমে জানিয়ে দেবে।\n"
-        "🔹 রিসিভ করার সময় থেকে পরবর্তী ২৪ ঘণ্টা Gmail-এর স্ট্যাটাস পর্যবেক্ষণ করা হবে।\n"
-        "🔹 ২৪ ঘণ্টা পর যে Gmail Accountগুলো নষ্ট হবে না, সেগুলোর টাকা আপনার Balance-এ অটোমেটিক যোগ হয়ে যাবে। 💰\n"
-        "🔹 যে Gmail Accountগুলো নষ্ট হয়ে যাবে, সেগুলোর জন্য টাকা যোগ হবে না এবং অ্যাকাউন্টগুলো ফেরত দেওয়া হবে।\n\n"
-        "⚠️ দয়া করে শুধু Valid Gmail Account সাবমিট করুন।\n"
-        "💚 ধন্যবাদ আমাদের সাথে থাকার জন্য।"
-    )
+    template = get_custom_message("rules_welcome", DEFAULT_RULES)
+    return template.replace("{name}", user_name)
 
 
 def get_bottom_keyboard():
@@ -369,13 +391,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     admin_id = get_admin_id()
 
-    # Maintenance Check
     if is_maintenance_mode() and user.id != admin_id:
-        await update.message.reply_text(
-            "⚠️ **বট আপডেটের কাজ চলছে!** 🛠\n\n"
-            "সম্মানিত ইউজার, বর্তমানে সিস্টেমে প্রয়োজনীয় আপডেটের কাজ চলছে। "
-            "সাময়িকভাবে বটের কার্যক্রম বন্ধ রয়েছে। কাজ শেষ হলেই বটটি পুনরায় চালু হবে।"
-        )
+        m_msg = get_custom_message("maintenance_text", DEFAULT_MAINTENANCE)
+        await update.message.reply_text(m_msg)
         return
 
     context.user_data.clear()
@@ -551,7 +569,7 @@ async def reset_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# ADMIN PANEL (WITH MAINTENANCE, CACHE & BUTTON EDIT)
+# ADMIN PANEL (WITH MESSAGES & BUTTONS EDIT)
 # =========================================================
 
 async def show_admin_panel(query):
@@ -559,8 +577,9 @@ async def show_admin_panel(query):
 
     keyboard = [
         [InlineKeyboardButton(f"🛠 স্ট্যাটাস: {m_status}", callback_data="toggle_maintenance")],
-        [InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ ও জ্যাঙ্ক ফাইলস", callback_data="admin_clear_cache")],
+        [InlineKeyboardButton("📝 মেসেজ টেক্সট এডিট করুন", callback_data="admin_edit_messages_menu")],
         [InlineKeyboardButton("✏️ মেনু বাটন নাম এডিট করুন", callback_data="admin_edit_buttons_menu")],
+        [InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ ও জ্যাঙ্ক ফাইলস", callback_data="admin_clear_cache")],
         [InlineKeyboardButton("➕ নতুন লিংক বাটন যোগ", callback_data="admin_add_button"),
          InlineKeyboardButton("🗑 লিংক বাটন মুছুন", callback_data="admin_remove_button")],
         [InlineKeyboardButton("📢 Broadcast Post", callback_data="admin_broadcast"),
@@ -603,9 +622,35 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id != admin_id:
             return
         deleted = clear_junk_cache()
-        await query.answer(f"সফল হয়েছে! {deleted}টি ক্যাশ/টেম্প ফাইল মুছে ডেটাবেজ পরিষ্কার করা হয়েছে।", show_alert=True)
+        await query.answer(f"সফল হয়েছে! {deleted}টি টেম্প ফাইল মুছে ক্যাশ পরিষ্কার করা হয়েছে।", show_alert=True)
         await show_admin_panel(query)
 
+    # --- মেসেজ এডিট সাব-মেনু ---
+    elif data == "admin_edit_messages_menu":
+        if user_id != admin_id:
+            return
+        keyboard = [
+            [InlineKeyboardButton("📝 ওয়েলকাম ও রুলস মেসেজ", callback_data="edit_msg:rules_welcome")],
+            [InlineKeyboardButton("📝 সাপোর্ট মেসেজ", callback_data="edit_msg:support_text")],
+            [InlineKeyboardButton("📝 মেইনটেনেন্স মেসেজ", callback_data="edit_msg:maintenance_text")],
+            [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
+        ]
+        await query.edit_message_text("📝 কোন মেসেজটি এডিট করতে চান? নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("edit_msg:"):
+        if user_id != admin_id:
+            return
+        msg_key = data.split(":")[1]
+        context.user_data["editing_msg_key"] = msg_key
+        context.user_data["state"] = "waiting_new_message_text"
+
+        hint = ""
+        if msg_key == "rules_welcome":
+            hint = "\n\n💡 টিপস: লেখার মধ্যে `{name}` রাখলে সেখানে স্বয়ংক্রিয়ভাবে ইউজারের নাম বসে যাবে।"
+
+        await query.edit_message_text(f"এই মেসেজের জন্য নতুন সম্পূর্ণ টেক্সটটি লিখে পাঠান:{hint}\n(কী: {msg_key})")
+
+    # --- বাটন নাম এডিট সাব-মেনু ---
     elif data == "admin_edit_buttons_menu":
         if user_id != admin_id:
             return
@@ -616,7 +661,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("✏️ Referral বাটন", callback_data="edit_btn:referral")],
             [InlineKeyboardButton("✏️ Rules বাটন", callback_data="edit_btn:rules"),
              InlineKeyboardButton("✏️ Support বাটন", callback_data="edit_btn:support")],
-            [InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]
+            [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
         ]
         await query.edit_message_text("✏️ কোন বাটনটির নাম পরিবর্তন করতে চান? নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -679,7 +724,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
         )
 
-    # Submission Approval / Rejection
+    # Submissions
     elif data.startswith("approve_sub:"):
         if user_id != admin_id:
             return
@@ -725,7 +770,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    # Withdrawal Approval / Rejection
+    # Withdrawals
     elif data.startswith("approve_withdraw:"):
         if user_id != admin_id:
             return
@@ -811,17 +856,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Maintenance Check
     if is_maintenance_mode() and user.id != admin_id:
-        await update.message.reply_text(
-            "⚠️ **বট আপডেটের কাজ চলছে!** 🛠\n\n"
-            "অনুগ্রহ করে অপেক্ষা করুন, সিস্টেম আপডেট শেষ হলে বটটি সবার জন্য উন্মুক্ত হবে।"
-        )
+        m_msg = get_custom_message("maintenance_text", DEFAULT_MAINTENANCE)
+        await update.message.reply_text(m_msg)
         return
 
     add_user(user)
     text = update.message.text.strip() if update.message.text else ""
     state = context.user_data.get("state")
 
-    # ডাইনামিক বাটন টাইটেল বের করা
     btn_sell = get_button_title("sell", "📤 SELL FRESH GMAIL ACCOUNT")
     btn_bal = get_button_title("balance", "💰 BALANCE")
     btn_wd = get_button_title("withdraw", "💸 WITHDRAW")
@@ -829,7 +871,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     btn_rules = get_button_title("rules", "📜 RULES")
     btn_sup = get_button_title("support", "📞 SUPPORT")
 
-    # বাটন নাম এডিট করার ইনপুট
+    # মেসেজ এডিটের ইনপুট নেওয়া
+    if user.id == admin_id and state == "waiting_new_message_text":
+        msg_key = context.user_data.get("editing_msg_key")
+        if text:
+            set_custom_message(msg_key, text)
+            context.user_data.clear()
+            await update.message.reply_text(f"✅ সফল হয়েছে! '{msg_key}' মেসেজ টেক্সট আপডেট করা হয়েছে।")
+        return
+
+    # বাটন নাম এডিটের ইনপুট নেওয়া
     if user.id == admin_id and state == "waiting_new_button_title":
         btn_key = context.user_data.get("editing_btn_key")
         if text:
@@ -915,13 +966,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif text == btn_sup:
+        sup_text = get_custom_message("support_text", DEFAULT_SUPPORT)
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("💬 মেসেজ পাঠান", url="https://t.me/Talha_juba098")]
         ])
-        await update.message.reply_text("যে কোনো সমস্যা বা সহযোগিতার জন্য সরাসরি সাপোর্টে যোগাযোগ করুন:", reply_markup=keyboard)
+        await update.message.reply_text(sup_text, reply_markup=keyboard)
         return
 
-    # Admin Add Button
+    # Admin Actions
     if user.id == admin_id and state == "admin_add_button_title":
         context.user_data["button_title"] = text
         context.user_data["state"] = "admin_add_button_url"
@@ -939,7 +991,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ বাটন যুক্ত হয়েছে:\n{title} -> {url}")
         return
 
-    # Admin Broadcast
     if user.id == admin_id and state == "admin_broadcast":
         users = db_execute("SELECT user_id FROM users", fetchall=True)
         success = 0
@@ -953,7 +1004,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📢 ব্রডকাস্ট সম্পন্ন: {success}/{len(users)}")
         return
 
-    # Admin Single Message
     if user.id == admin_id and state == "admin_single_user":
         try:
             context.user_data["target_user"] = int(text)
@@ -1016,7 +1066,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Withdraw Account
     if state == "withdraw_account":
         account = text
         method = context.user_data.get("withdraw_method")
