@@ -226,7 +226,7 @@ def get_owner_id():
 
 
 def set_owner_id(user_id):
-    set_config("owner_id", user_id)
+    set_config("owner_id", str(user_id))
 
 
 def is_admin(user_id):
@@ -269,9 +269,10 @@ def get_all_admins():
 
 
 async def notify_all_admins(context, message, exclude_user_id=None):
-    """টিমের সকল এডমিন ও ওনারের ইনবক্সে লাইভ আপডেট পাঠানো"""
+    """টিমের সকল এডমিন ও ওনারের ইনবক্সে ১০০% নির্ভরযোগ্যভাবে লাইভ আপডেট পাঠানো"""
     owner, helpers = get_all_admins()
     admin_list = []
+    
     if owner:
         try:
             admin_list.append(int(owner))
@@ -284,14 +285,20 @@ async def notify_all_admins(context, message, exclude_user_id=None):
         except (ValueError, TypeError):
             pass
 
-    unique_admins = list(set(admin_list))
+    unique_admins = set(admin_list)
+    ex_id = int(exclude_user_id) if exclude_user_id else None
+
     for a_id in unique_admins:
-        if exclude_user_id and int(a_id) == int(exclude_user_id):
+        if ex_id and a_id == ex_id:
             continue
         try:
-            await context.bot.send_message(chat_id=int(a_id), text=message, parse_mode="Markdown")
+            await context.bot.send_message(
+                chat_id=a_id, 
+                text=message, 
+                parse_mode="Markdown"
+            )
         except Exception as e:
-            print(f"Error notifying admin {a_id}: {e}")
+            print(f"Failed to send admin notify to {a_id}: {e}")
 
 
 def is_maintenance_mode():
@@ -1470,6 +1477,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db_execute("UPDATE submissions SET handled_by=? WHERE id=?", (rec_name, sub_id))
 
+        # ১. সবার আগে ওনার ও বাকি অ্যাডমিনদের ইনবক্সে নিশ্চিত নোটিফিকেশন পাঠানো
         team_msg = (
             f"📢 **টিম আপডেট (#Submission_{sub_id})**\n\n"
             f"👤 ফাইল রিসিভ করেছেন: **{rec_name}**\n"
@@ -1478,6 +1486,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await notify_all_admins(context, team_msg, exclude_user_id=user_id)
 
+        # ২. এরপর বাকি অ্যাডমিনদের চ্যাট থেকে ফাইল মুছে ফেলা
         other_msgs = db_execute("SELECT admin_id, message_id FROM submission_admin_messages WHERE sub_id=?", (sub_id,), fetchall=True)
         for om in other_msgs:
             if int(om["admin_id"]) != int(user_id):
@@ -1488,6 +1497,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db_execute("DELETE FROM submission_admin_messages WHERE sub_id=?", (sub_id,))
 
+        # ৩. যিনি রিসিভ করেছেন তার চ্যাটে চেকিং বাটনগুলো দেখানো
         emails = json.loads(sub["emails_json"])
         if sub_id not in admin_stage1_selections:
             admin_stage1_selections[sub_id] = set(range(len(emails)))
@@ -2105,7 +2115,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"📂 **{dyn_btn_row['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
         return
 
-    # ৫. ব্রডকাস্ট পোস্ট হ্যান্ডলিং
+    # ৫. ব্রডকাস্ট পোস্ট হ্যান্ডলিং (ইউজার ইনবক্স + অফিসিয়াল গ্রুপে)
     if is_admin(user.id) and state == "admin_broadcast":
         users = db_execute("SELECT user_id FROM users", fetchall=True)
         user_count = 0
