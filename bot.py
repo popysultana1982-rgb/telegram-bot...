@@ -269,7 +269,7 @@ def get_all_admins():
 
 
 async def notify_all_admins(context, message, exclude_user_id=None):
-    """টিমের সকল এডমিন ও ওনারের ইনবক্সে ১০০% নির্ভরযোগ্যভাবে লাইভ আপডেট পাঠানো"""
+    """টিমের সকল এডমিন ও ওনারের ইনবক্সে লাইভ আপডেট পাঠানো"""
     owner, helpers = get_all_admins()
     admin_list = []
     if owner:
@@ -985,6 +985,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
+    # ১. মেম্বারশিপ ভেরিফাই
     if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         if joined:
@@ -995,9 +996,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ আপনি এখনো জয়েন করেননি! চ্যানেল ও গ্রুপে জয়েন হয়ে আবার ভেরিফাই চাপুন।", show_alert=True)
         return
 
-    # -------------------------------------------------------------
-    # ডায়নামিক সাব-বাটন ও মাল্টিপল মেসেজ ক্লিক
-    # -------------------------------------------------------------
+    # ২. ডায়নামিক সাব-বাটন ও মাল্টিপল মেসেজ ক্লিক (সকল ইউজারের জন্য)
     if data.startswith("dyn_click:"):
         btn_id = int(data.split(":")[1])
         btn = db_execute("SELECT * FROM dynamic_buttons WHERE id=?", (btn_id,), fetchone=True)
@@ -1016,8 +1015,76 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=user_id, text=f"📂 **{btn['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
         return
 
+    # ৩. ইউজারের সাবমিশন হিস্ট্রি দেখা (সকল সাধারণ ইউজার ও অ্যাডমিনের জন্য উন্মুক্ত)
+    if data == "user_hist_live":
+        subs = db_execute(
+            "SELECT * FROM submissions WHERE user_id=? AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
+            (user_id,), 
+            fetchall=True
+        )
+        if not subs:
+            back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
+            await query.edit_message_text("⏳ **বর্তমানে আপনার কোনো ফাইল প্রসেসিং বা পর্যবেক্ষণে নেই।**\n\nনতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখা যাবে।", reply_markup=back_kb, parse_mode="Markdown")
+            return
+
+        hist_msg = "⏳ **আপনার লাইভ ও চলমান ফাইলগুলোর স্ট্যাটাস:**\n\n"
+        for s in subs:
+            emails = json.loads(s["emails_json"])
+            if s["status"] == "pending":
+                st_text = "🟡 নতুন জমা (অ্যাডমিন পর্যালোচনার অপেক্ষায়)"
+            else:
+                review_count = len(json.loads(s["in_review_json"])) if s["in_review_json"] else 0
+                st_text = f"🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে রয়েছে ({review_count}টি জিমেইল)"
+
+            hist_msg += (
+                f"📁 **ফাইল ID: #{s['id']}**\n"
+                f"📅 তারিখ: {s['created_at'][:10]}\n"
+                f"✉️ মোট জিমেইল: {len(emails)} টি\n"
+                f"⚡ স্ট্যাটাস: {st_text}\n"
+                f"-----------------------------\n"
+            )
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
+        await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
+        return
+
+    elif data == "user_hist_all":
+        subs = db_execute("SELECT * FROM submissions WHERE user_id=? ORDER BY id DESC LIMIT 15", (user_id,), fetchall=True)
+        if not subs:
+            back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
+            await query.edit_message_text("📜 আপনি এখনও কোনো ফাইল সাবমিট করেননি।", reply_markup=back_kb)
+            return
+
+        hist_msg = "📜 **আপনার অতীতের সকল সাবমিশন হিস্ট্রি (সর্বশেষ ১৫টি):**\n\n"
+        for s in subs:
+            emails = json.loads(s["emails_json"])
+            if s["status"] == "pending":
+                st_text = "🟡 নতুন জমা (পর্যালোচনার অপেক্ষায়)"
+            elif s["status"] == "stage2_review":
+                st_text = "🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে"
+            elif s["status"] == "completed":
+                st_text = f"🟢 সম্পন্ন (অনুমোদিত: {s['accepted_count']}টি | বাতিল: {s['rejected_count']}টি)"
+            else:
+                st_text = f"🔴 সম্পূর্ণ বাতিল ({s['rejected_count']}টি নষ্ট)"
+
+            hist_msg += (
+                f"📁 **ফাইল ID: #{s['id']}** | {s['created_at'][:10]}\n"
+                f"✉️ মোট: {len(emails)}টি | ফলাফল: {st_text}\n"
+                f"-----------------------------\n"
+            )
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
+        await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
+        return
+
+    elif data == "user_hist_menu":
+        hist_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
+            [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")]
+        ])
+        await query.edit_message_text("📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\nনিচের যেকোনো অপশনে ক্লিক করে বিস্তারিত দেখুন:", reply_markup=hist_kb, parse_mode="Markdown")
+        return
+
     # -------------------------------------------------------------
-    # অ্যাডমিন প্যানেল এক্সেস
+    # এডমিন গার্ড (নিচের একশনগুলো শুধুমাত্র অ্যাডমিন/ওনার করতে পারবে)
     # -------------------------------------------------------------
     if not is_admin(user_id):
         return
@@ -1386,73 +1453,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("এক্সেল ফাইল পাঠানো হয়েছে!")
 
     # -------------------------------------------------------------
-    # ইউজার হিস্ট্রি
-    # -------------------------------------------------------------
-    elif data == "user_hist_live":
-        subs = db_execute(
-            "SELECT * FROM submissions WHERE user_id=? AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
-            (user_id,), 
-            fetchall=True
-        )
-        if not subs:
-            back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
-            await query.edit_message_text("⏳ **বর্তমানে আপনার কোনো ফাইল প্রসেসিং বা পর্যবেক্ষণে নেই।**\n\nনতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখা যাবে।", reply_markup=back_kb, parse_mode="Markdown")
-            return
-
-        hist_msg = "⏳ **আপনার লাইভ ও চলমান ফাইলগুলোর স্ট্যাটাস:**\n\n"
-        for s in subs:
-            emails = json.loads(s["emails_json"])
-            if s["status"] == "pending":
-                st_text = "🟡 নতুন জমা (অ্যাডমিন পর্যালোচনার অপেক্ষায়)"
-            else:
-                review_count = len(json.loads(s["in_review_json"])) if s["in_review_json"] else 0
-                st_text = f"🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে রয়েছে ({review_count}টি জিমেইল)"
-
-            hist_msg += (
-                f"📁 **ফাইল ID: #{s['id']}**\n"
-                f"📅 তারিখ: {s['created_at'][:10]}\n"
-                f"✉️ মোট জিমেইল: {len(emails)} টি\n"
-                f"⚡ স্ট্যাটাস: {st_text}\n"
-                f"-----------------------------\n"
-            )
-        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
-        await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
-
-    elif data == "user_hist_all":
-        subs = db_execute("SELECT * FROM submissions WHERE user_id=? ORDER BY id DESC LIMIT 15", (user_id,), fetchall=True)
-        if not subs:
-            back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
-            await query.edit_message_text("📜 আপনি এখনও কোনো ফাইল সাবমিট করেননি।", reply_markup=back_kb)
-            return
-
-        hist_msg = "📜 **আপনার অতীতের সকল সাবমিশন হিস্ট্রি (সর্বশেষ ১৫টি):**\n\n"
-        for s in subs:
-            emails = json.loads(s["emails_json"])
-            if s["status"] == "pending":
-                st_text = "🟡 নতুন জমা (পর্যালোচনার অপেক্ষায়)"
-            elif s["status"] == "stage2_review":
-                st_text = "🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে"
-            elif s["status"] == "completed":
-                st_text = f"🟢 সম্পন্ন (অনুমোদিত: {s['accepted_count']}টি | বাতিল: {s['rejected_count']}টি)"
-            else:
-                st_text = f"🔴 সম্পূর্ণ বাতিল ({s['rejected_count']}টি নষ্ট)"
-
-            hist_msg += (
-                f"📁 **ফাইল ID: #{s['id']}** | {s['created_at'][:10]}\n"
-                f"✉️ মোট: {len(emails)}টি | ফলাফল: {st_text}\n"
-                f"-----------------------------\n"
-            )
-        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
-        await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
-
-    elif data == "user_hist_menu":
-        hist_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
-            [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")]
-        ])
-        await query.edit_message_text("📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\nনিচের যেকোনো অপশনে ক্লিক করে বিস্তারিত দেখুন:", reply_markup=hist_kb, parse_mode="Markdown")
-
-    # -------------------------------------------------------------
     # ধাপ ১: রিসিভ করা এবং বাকি সবার কাছে মেসেজ যাওয়া + ফাইল রিমুভ
     # -------------------------------------------------------------
     elif data.startswith("sub_s1_open:"):
@@ -1470,7 +1470,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db_execute("UPDATE submissions SET handled_by=? WHERE id=?", (rec_name, sub_id))
 
-        # ১. যিনি রিসিভ করেছেন তিনি বাদে বাকিদের নোটিফিকেশন পাঠানো
         team_msg = (
             f"📢 **টিম আপডেট (#Submission_{sub_id})**\n\n"
             f"👤 ফাইল রিসিভ করেছেন: **{rec_name}**\n"
@@ -1479,7 +1478,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await notify_all_admins(context, team_msg, exclude_user_id=user_id)
 
-        # ২. বাকি সবার চ্যাট থেকে পূর্বের ফাইল মেসেজ রিমুভ করা
         other_msgs = db_execute("SELECT admin_id, message_id FROM submission_admin_messages WHERE sub_id=?", (sub_id,), fetchall=True)
         for om in other_msgs:
             if int(om["admin_id"]) != int(user_id):
@@ -2107,7 +2105,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"📂 **{dyn_btn_row['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
         return
 
-    # ৫. ব্রডকাস্ট পোস্ট হ্যান্ডলিং (ইউজারদের ইনবক্স + নির্ধারিত অফিশিয়াল গ্রুপে)
+    # ৫. ব্রডকাস্ট পোস্ট হ্যান্ডলিং
     if is_admin(user.id) and state == "admin_broadcast":
         users = db_execute("SELECT user_id FROM users", fetchall=True)
         user_count = 0
@@ -2179,6 +2177,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}", reply_markup=get_bottom_keyboard())
         return
 
+    # হিস্ট্রি বাটন (কীবোর্ড থেকে চাপলে মেনু আসবে)
     if text == btn_hist:
         hist_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
@@ -2352,7 +2351,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: {text}\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)")
 
-        # শুধুমাত্র মূল ওনারের কাছে মেসেজ যাবে
         owner_id = get_owner_id()
         if owner_id:
             keyboard = InlineKeyboardMarkup([
@@ -2377,7 +2375,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         return
 
-    # ফাইল রিসিভ ও মেসেজ ট্র্যাকিং
+    # ফাইল সাবমিট প্রসেসিং
     if state == "waiting_file":
         doc = update.message.document
         if not doc:
