@@ -443,20 +443,24 @@ def increase_file_count(user_id):
 
 
 # =========================================================
-# FORCE JOIN CHAT-ID VERIFICATION SYSTEM
+# SAFE FORCE JOIN CHAT-ID VERIFICATION SYSTEM
 # =========================================================
 
 async def is_user_joined_all(bot, user_id):
+    """ক্র্যাশ প্রতিরোধক নিরাপদ মেম্বারশিপ চেকার"""
     if is_admin(user_id):
         return True
 
+    # ১. পেমেন্ট প্রুফ চ্যানেল যাচাই
     try:
         member = await bot.get_chat_member(chat_id=FORCE_CHANNEL_CHAT_ID, user_id=user_id)
         if member.status in ["left", "kicked"]:
             return False
     except Exception:
+        # নতুন ইউজার জয়েন না থাকা অবস্থায় টেলিগ্রাম এরর দিলে সেফলি ফলস রিটার্ন করবে
         return False
 
+    # ২. অফিশিয়াল গ্রুপ যাচাই
     try:
         member = await bot.get_chat_member(chat_id=FORCE_GROUP_CHAT_ID, user_id=user_id)
         if member.status in ["left", "kicked"]:
@@ -468,7 +472,6 @@ async def is_user_joined_all(bot, user_id):
 
 
 def get_first_time_markup():
-    """প্রথমবার আসার সময় রুলস মেসেজের নিচে ৩টি বাটন ও সাপোর্ট বাটন"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 ১. পেমেন্ট প্রুফ চ্যানেল", url=FORCE_CHANNEL_LINK)],
         [InlineKeyboardButton("👥 ২. অফিসিয়াল গ্রুপ", url=FORCE_GROUP_LINK)],
@@ -478,7 +481,6 @@ def get_first_time_markup():
 
 
 def get_rejoin_markup():
-    """বের হয়ে যাওয়ার পর শুধুমাত্র ৩টি বাটন সংবলিত কীবোর্ড"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 ১. পেমেন্ট প্রুফ চ্যানেল", url=FORCE_CHANNEL_LINK)],
         [InlineKeyboardButton("👥 ২. অফিসিয়াল গ্রুপ", url=FORCE_GROUP_LINK)],
@@ -627,24 +629,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     joined = await is_user_joined_all(context.bot, user.id)
 
-    # কেস ১: ইউজার গ্রুপ ও চ্যানেলে জয়েন আছে
+    # ১. ইউজার জয়েন থাকলে সরাসরি কাজের মেনু
     if joined:
         await show_main_menu(update, context)
         return
 
-    # কেস ২: ইউজার একদম নতুন (আগে রুলস দেখেনি) -> বিস্তারিত ওয়েলকাম + রুলস মেসেজ
+    # ২. ইউজার নতুন হলে বিস্তারিত সালাম ও ৮টি নিয়মাবলী
     if not seen_rules:
         name = user.first_name or "User"
         welcome_text = get_custom_msg("welcome").replace("{name}", name)
 
         await update.message.reply_text(
-            f"{welcome_text}\n\n👇 **বট চালু করতে নিচের চ্যানেল ও গ্রুপে যুক্ত হয়ে ভেরিফাই চাপুন:**",
+            f"{welcome_text}\n\n👇 **বট চালু করতে নিচের চ্যানেল ও গ্রুপে যুক্ত হয়ে ভেরিফাই বাটনে চাপ দিন:**",
             reply_markup=get_first_time_markup(),
             parse_mode="Markdown"
         )
         return
 
-    # কেস ৩: ইউজার পুরনো কিন্তু গ্রুপ থেকে বের হয়ে গেছে -> কোনো বড় মেসেজ ছাড়াই ৩টি বাটন
+    # ৩. ইউজার আগে রুলস দেখেছে কিন্তু বের হয়ে গেছে -> সরাসরি ৩টি বাটন
     await update.message.reply_text(
         "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:",
         reply_markup=get_rejoin_markup()
@@ -1629,7 +1631,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(sup_text, reply_markup=keyboard)
         return
 
-    # ২. অন্যান্য বাটনের ক্ষেত্রে ফোর্স জয়েন যাচাই (বের হয়ে গেলে সরাসরি ৩টি বাটন আসবে)
+    # ২. অন্যান্য বাটনের ক্ষেত্রে ফোর্স জয়েন যাচাই
     if not is_admin(user.id):
         joined = await is_user_joined_all(context.bot, user.id)
         if not joined:
@@ -2033,7 +2035,7 @@ def main():
     # Message Handler (Strictly Private Chat)
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler))
 
-    print("Gmail Sell Bot is running strictly in private chat mode...")
+    print("Gmail Sell Bot is running safely in private chat mode...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
