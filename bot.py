@@ -15,6 +15,7 @@ from telegram import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 from telegram.ext import (
     Application,
@@ -41,7 +42,7 @@ WITHDRAW_FEE_PERCENT = 4
 REWARD_PER_EMAIL = 25.0  # প্রতি ভ্যালিড জিমেইলে ২৫ টাকা
 DAILY_FILE_LIMIT = 5
 MAX_EMAILS_PER_FILE = 5
-DUPLICATE_CHECK_DAYS = 3  # একবার দেওয়া জিমেইল ৩ দিন পর্যন্ত আর সাবমিট করা যাবে না
+DUPLICATE_CHECK_DAYS = 3  # একবার দেওয়া জিমেইল ৩ দিন পর্যন্ত জমা দেওয়া যাবে না
 
 REFERRAL_BONUS = 5.0
 USDT_RATE = 124.0
@@ -56,7 +57,6 @@ FORCE_CHANNEL_USERNAME = "@fast_payment_proof_chanel"
 FORCE_CHANNEL_LINK = "https://t.me/fast_payment_proof_chanel"
 
 FORCE_GROUP_LINK = "https://t.me/+rVP6CkmqrnFlNzA1"
-# আপনার প্রাইভেট গ্রুপের চ্যাট আইডি দিন (যেমন: -100xxxxxxxxxx)
 REQUIRED_GROUP_ID = os.getenv("REQUIRED_GROUP_ID", "") 
 
 
@@ -152,7 +152,6 @@ def init_db():
         )
     """)
 
-    # ডুপ্লিকেট রোধের জন্য পৃথক টেবিল
     db_execute("""
         CREATE TABLE IF NOT EXISTS submitted_emails (
             email TEXT,
@@ -172,7 +171,7 @@ def init_db():
 # EXCEL GENERATOR HELPER
 # =========================================================
 
-def create_rejected_excel(emails, title="Rejected Emails"):
+def create_rejected_excel(emails):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Rejected"
@@ -193,15 +192,21 @@ DEFAULT_MESSAGES = {
     "welcome": (
         "আসসালামু আলাইকুম, {name}! 🌸\n\n"
         "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
-        "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করে নিরাপদভাবে টাকা ইনকাম করতে পারবেন।"
+        "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করে নিরাপদভাবে টাকা ইনকাম করতে পারবেন।\n\n"
+        "📌 **৩টি ধাপে সাবমিশন যাচাই পদ্ধতি:**\n"
+        "🔹 ধাপ ১: ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক রিসিভ করবেন এবং যে জিমেইলগুলো লগইন করা যায় সেগুলো পর্যালোচনায় রাখবেন। যেগুলোতে লগইন সমস্যা থাকবে সেগুলো ১ম ধাপেই বাতিল ও এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
+        "🔹 ধাপ ২: পর্যালোচনায় রাখা জিমেইলগুলো পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে। এই সময়ে ব্যালেন্স যোগ হবে না।\n"
+        "🔹 ধাপ ৩: ২৪ থেকে ৪৮ ঘণ্টা পর যে জিমেইলগুলো ঠিক থাকবে, সেগুলোর প্রতিটির জন্য ৳২৫ টাকা আপনার ব্যালেন্সে যোগ হয়ে যাবে! 💰\n"
+        "🔹 আর শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n\n"
+        "⚠️ প্রতিদিন সর্বোচ্চ ৫টি ফাইল এবং প্রতি ফাইলে সর্বোচ্চ ৫টি ভ্যালিড Gmail দিতে পারবেন। একবার সাবমিট করা জিমেইল আগামী ৩ দিনের মধ্যে পুনরায় দেওয়া যাবে না।\n\n"
+        "👇 **বটের কার্যক্রম শুরু করতে নিচের গ্রুপ ও চ্যানেলে জয়েন হয়ে ভেরিফাই বাটনে ক্লিক করুন:**"
     ),
     "rules": (
         "📜 **আমাদের জিমেইল সাবমিশন নিয়মাবলী:**\n\n"
-        "🔹 ধাপ ১: ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক রিসিভ করবেন এবং যে জিমেইলগুলো লগইন করা যায় সেগুলো পর্যালোচনায় রাখবেন। যেগুলোতে লগইন সমস্যা থাকবে সেগুলো ১ম ধাপেই বাতিল ও এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
-        "🔹 ধাপ ২: পর্যালোচনায় রাখা জিমেইলগুলো পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে। এই সময়ে ব্যালেন্স যোগ হবে না।\n"
-        "🔹 ধাপ ৩: ২৪ থেকে ৪৮ ঘণ্টা পর যে জিমেইলগুলো ঠিক থাকবে, সেগুলোর প্রতিটির জন্য ৳২৫ টাকা আপনার Balance-এ যোগ হয়ে যাবে! 💰\n"
-        "🔹 আর শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n\n"
-        "⚠️ প্রতিদিন সর্বোচ্চ ৫টি ফাইল এবং প্রতি ফাইলে সর্বোচ্চ ৫টি ভ্যালিড Gmail দিতে পারবেন। একবার সাবমিট করা জিমেইল আগামী ৩ দিনের মধ্যে পুনরায় দেওয়া যাবে না।"
+        "🔹 ধাপ ১: ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই করবেন।\n"
+        "🔹 ধাপ ২: পর্যালোচনায় থাকা জিমেইলগুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণে থাকবে।\n"
+        "🔹 ধাপ ৩: অক্ষত প্রতি জিমেইলে ৳২৫ টাকা পাবেন এবং নষ্ট জিমেইল এক্সেল ফাইলে ফেরত যাবে।\n"
+        "⚠️ এক ফাইলে সর্বোচ্চ ৫টি @gmail.com এবং দিনে সর্বোচ্চ ৫টি ফাইল সাবমিট করা যাবে।"
     ),
     "sell": (
         "📤 আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।\n\n"
@@ -223,7 +228,7 @@ DEFAULT_MESSAGES = {
 }
 
 MESSAGE_NAMES = {
-    "welcome": "🎉 Welcome Message (/start)",
+    "welcome": "🎉 Welcome Message & Rules",
     "rules": "📜 Rules Message",
     "sell": "📤 Sell Gmail Instruction",
     "referral": "👥 Referral Message",
@@ -364,12 +369,11 @@ def increase_file_count(user_id):
 # =========================================================
 
 async def is_user_joined_all(bot, user_id):
-    """ইউজার দুটি গ্রুপ বা চ্যানেলেই জয়েন আছে কি না তা যাচাই করে"""
+    """ইউজার চ্যানেলে জয়েন আছে কি না তা যাচাই করে"""
     admin_id = get_admin_id()
     if user_id == admin_id:
         return True
 
-    # ১. চ্যানেল চেক
     try:
         member = await bot.get_chat_member(chat_id=FORCE_CHANNEL_USERNAME, user_id=user_id)
         if member.status in ["left", "kicked"]:
@@ -377,7 +381,6 @@ async def is_user_joined_all(bot, user_id):
     except Exception:
         pass
 
-    # ২. গ্রুপ চেক (যদি আইডি দেওয়া থাকে)
     if REQUIRED_GROUP_ID:
         try:
             member = await bot.get_chat_member(chat_id=REQUIRED_GROUP_ID, user_id=user_id)
@@ -391,9 +394,9 @@ async def is_user_joined_all(bot, user_id):
 
 def get_force_join_markup():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 পেমেন্ট প্রুফ চ্যানেলে যুক্ত হন", url=FORCE_CHANNEL_LINK)],
-        [InlineKeyboardButton("👥 অফিসিয়াল গ্রুপে যুক্ত হন", url=FORCE_GROUP_LINK)],
-        [InlineKeyboardButton("🔄 চেক করুন / Joined", callback_data="check_joined")]
+        [InlineKeyboardButton("📢 ১. পেমেন্ট প্রুফ চ্যানেল", url=FORCE_CHANNEL_LINK)],
+        [InlineKeyboardButton("👥 ২. অফিসিয়াল গ্রুপ", url=FORCE_GROUP_LINK)],
+        [InlineKeyboardButton("✅ ৩. ভেরিফাই করুন (Verify)", callback_data="check_joined")]
     ])
 
 
@@ -479,11 +482,7 @@ async def show_main_menu(update, context):
     user = update.effective_user
     add_user(user)
 
-    name = user.first_name or "User"
-    welcome_msg = get_custom_msg("welcome").replace("{name}", name)
-
-    # ব্যালেন্স মুছে ফেলা হয়েছে
-    full_text = f"{welcome_msg}\n\nনিচের বাটনগুলো চেপে অপশন নির্বাচন করুন:"
+    msg_text = "🎉 **ধন্যবাদ! আপনি সফলভাবে যুক্ত হয়েছেন।**\n\nনিচের বাটনগুলো ব্যবহার করে কাজ শুরু করুন:"
 
     buttons = db_execute("SELECT * FROM buttons ORDER BY id DESC", fetchall=True)
     inline_kb = None
@@ -492,11 +491,11 @@ async def show_main_menu(update, context):
         inline_kb = InlineKeyboardMarkup(kb_list)
 
     if update.callback_query:
-        await update.callback_query.message.reply_text(full_text, reply_markup=get_bottom_keyboard())
+        await update.callback_query.message.reply_text(msg_text, reply_markup=get_bottom_keyboard(), parse_mode="Markdown")
         if inline_kb:
             await update.callback_query.message.reply_text("Important Links:", reply_markup=inline_kb)
     else:
-        await update.message.reply_text(full_text, reply_markup=get_bottom_keyboard())
+        await update.message.reply_text(msg_text, reply_markup=get_bottom_keyboard(), parse_mode="Markdown")
         if inline_kb:
             await update.message.reply_text("Important Links:", reply_markup=inline_kb)
 
@@ -506,6 +505,10 @@ async def show_main_menu(update, context):
 # =========================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # গ্রুপে /start দিলে কোনো রেসপন্স করবে না
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+
     user = update.effective_user
     admin_id = get_admin_id()
 
@@ -515,6 +518,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
 
+    # রেফারেল ট্র্যাকিং
     referrer_id = None
     if context.args and len(context.args) > 0:
         try:
@@ -525,39 +529,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             referrer_id = None
 
     is_new = add_user(user, referrer_id)
-
     if is_new and referrer_id:
         update_balance(referrer_id, REFERRAL_BONUS)
-        ref_new_bdt = get_balance(referrer_id)
-        ref_new_usdt = ref_new_bdt / USDT_RATE
         try:
             await context.bot.send_message(
                 chat_id=referrer_id,
-                text=(
-                    f"🎉 অভিনন্দন! আপনার একটি রেফার সফল হয়েছে!\n\n"
-                    f"👤 নতুন ইউজার: @{user.username or 'No username'} ({user.id})\n"
-                    f"🎁 রেফারেল বোনাস: +৳{REFERRAL_BONUS:.2f} BDT\n"
-                    f"💰 বর্তমান ব্যালেন্স: ৳{ref_new_bdt:.2f} BDT (${ref_new_usdt:.2f} USDT)"
-                )
+                text=f"🎉 আপনার একটি নতুন রেফার সফল হয়েছে! বোনাস: +৳{REFERRAL_BONUS:.2f} BDT"
             )
         except Exception:
             pass
 
-    # গ্রুপ ও চ্যানেলে জয়েন আছে কি না যাচাই
-    joined = await is_user_joined_all(context.bot, user.id)
-    if not joined:
-        join_msg = (
-            f"👋 আসসালামু আলাইকুম, {user.first_name}!\n\n"
-            f"⚠️ বটটি ব্যবহার করতে হলে আপনাকে আমাদের অফিশিয়াল গ্রুপ এবং পেমেন্ট চ্যানেলে যুক্ত থাকতে হবে।\n\n"
-            f"👇 নিচের দুটি লিংকে জয়েন হয়ে **'চেক করুন'** বাটনে চাপ দিন:"
-        )
-        await update.message.reply_text(join_msg, reply_markup=get_force_join_markup())
-        return
+    # সম্পূর্ণ ওয়েলকাম মেসেজ + ৩ ধাপের রুলস
+    name = user.first_name or "User"
+    welcome_text = get_custom_msg("welcome").replace("{name}", name)
 
-    await show_main_menu(update, context)
+    # ৩টি বাটনসহ ওয়েলকাম মেসেজ সেন্ড হবে
+    await update.message.reply_text(
+        welcome_text,
+        reply_markup=get_force_join_markup(),
+        parse_mode="Markdown"
+    )
 
 
 async def set_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
     user_id = update.effective_user.id
     if not context.args:
         await update.message.reply_text("ব্যবহার নিয়ম: `/setadmin <secret_key>`")
@@ -571,6 +567,8 @@ async def set_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
     admin_id = get_admin_id()
     if not admin_id or update.effective_user.id != admin_id:
         await update.message.reply_text("❌ আপনি অ্যাডমিন নন। প্রথমে `/setadmin <key>` কমান্ড পাঠান।")
@@ -583,6 +581,8 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
     if update.effective_user.id != get_admin_id():
         return
     if len(context.args) < 2:
@@ -608,6 +608,8 @@ async def add_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cut_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
     if update.effective_user.id != get_admin_id():
         return
     if len(context.args) < 2:
@@ -633,6 +635,8 @@ async def cut_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reset_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
     if update.effective_user.id != get_admin_id():
         return
     if len(context.args) < 1:
@@ -676,7 +680,7 @@ async def show_admin_panel(query):
 
 
 # =========================================================
-# 3-STAGE LOGIC & CALLBACKS
+# CALLBACK HANDLER
 # =========================================================
 
 admin_stage1_selections = {}
@@ -713,14 +717,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = get_admin_id()
     data = query.data
 
-    # ফোর্স জয়েন চেক বাটন
+    # ৩. ভেরিফাই বাটন
     if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         if joined:
             await query.message.delete()
             await show_main_menu(update, context)
         else:
-            await query.answer("❌ আপনি এখনো দুটি গ্রুপ/চ্যানেলে জয়েন করেননি! দয়া করে জয়েন হয়ে আবার চেক করুন।", show_alert=True)
+            await query.answer("❌ আপনি এখনও জয়েন করেননি! দুটি গ্রুপ ও চ্যানেলে জয়েন হয়ে আবার ভেরিফাই চাপুন।", show_alert=True)
         return
 
     if data == "admin_panel":
@@ -869,7 +873,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # -------------------------------------------------------------
-    # অ্যাডমিন ফাইল হিস্ট্রি, এক্সেল ডাউনলোড ও ডিলিট
+    # অ্যাডমিন ফাইল হিস্ট্রি ও ডিলিট
     # -------------------------------------------------------------
     elif data.startswith("admin_file_history:"):
         if user_id != admin_id:
@@ -981,7 +985,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("এক্সেল ফাইল পাঠানো হয়েছে!")
 
     # -------------------------------------------------------------
-    # ইউজার হিস্ট্রি (লাইভ ও সম্পূর্ণ হিস্ট্রি বাটন)
+    # ইউজার হিস্ট্রি (লাইভ ও সম্পূর্ণ হিস্ট্রি)
     # -------------------------------------------------------------
     elif data == "user_hist_live":
         subs = db_execute(
@@ -1048,7 +1052,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\nনিচের যেকোনো অপশনে ক্লিক করে বিস্তারিত দেখুন:", reply_markup=hist_kb, parse_mode="Markdown")
 
     # -------------------------------------------------------------
-    # ধাপ ১: প্রাথমিক রিসিভ ও সিলেকশন
+    # ৩ ধাপে রিভিউ কলব্যাক লজিক
     # -------------------------------------------------------------
     elif data.startswith("sub_s1_open:"):
         if user_id != admin_id:
@@ -1156,7 +1160,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔹 পর্যালোচনায় রাখা হয়েছে: {len(in_review_emails)} টি\n"
             f"❌ লগইন না হওয়ায় বাতিল: {len(s1_rejected)} টি\n\n"
             f"📌 **জরুরি তথ্য:** পর্যালোচনায় থাকা {len(in_review_emails)}টি জিমেইল আগামী **২৪ থেকে ৪৮ ঘণ্টা** পর্যবেক্ষণে থাকবে। "
-            f"পর্যবেক্ষণ শেষে যে জিমেইলগুলো ঠিক থাকবে, প্রতিটির জন্য ৳২৫ টাকা আপনার ব্যালেন্সে স্বয়ংক্রিয়ভাবে যোগ হবে।"
+            f"পর্যবেক্ষণ শেষে যে জিমেইলগুলো ঠিক থাকবে, প্রতিটির জন্য ৳২৫ টাকা আপনার ব্যালেন্সে যোগ হবে।"
         )
         try:
             await context.bot.send_message(chat_id=sub["user_id"], text=user_msg)
@@ -1175,9 +1179,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-    # -------------------------------------------------------------
-    # ধাপ ৩: চূড়ান্ত অনুমোদন ও ক্লোজ
-    # -------------------------------------------------------------
     elif data.startswith("sub_s3_open:"):
         if user_id != admin_id:
             return
@@ -1388,10 +1389,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# MESSAGE HANDLER
+# MESSAGE HANDLER (PRIVATE ONLY)
 # =========================================================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # গ্রুপ বা চ্যানেলে কোনো মেসেজ রিপ্লাই বা বাটন পাঠানো হবে না
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+
     user = update.effective_user
     if not user:
         return
@@ -1419,7 +1424,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
-    # ১. সাপোর্ট বাটন (ফোর্স জয়েন চেকের আওতামুক্ত)
+    # ১. সাপোর্ট বাটন উন্মুক্ত (ফোর্স জয়েন চেকের আওতামুক্ত)
     if text == btn_sup:
         sup_text = get_custom_msg("support")
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💬 মেসেজ পাঠান", url="https://t.me/Talha_juba098")]])
@@ -1432,8 +1437,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not joined:
             await update.message.reply_text(
                 "⚠️ **দুঃখিত!** বটের সুবিধাসমূহ ব্যবহার করতে হলে আপনাকে আমাদের গ্রুপ ও চ্যানেলে জয়েন থাকতে হবে।\n\n"
-                "নিচের লিংকে ক্লিক করে যুক্ত হয়ে 'চেক করুন' চাপুন:",
-                reply_markup=get_force_join_markup()
+                "নিচের লিংকে ক্লিক করে যুক্ত হয়ে 'ভেরিফাই করুন' চাপুন:",
+                reply_markup=get_force_join_markup(),
+                parse_mode="Markdown"
             )
             return
 
@@ -1698,7 +1704,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # ডুপ্লিকেট জিমেইল চেক (বিগত ৩ দিনের মধ্যে এসেছে কি না)
+        # ডুপ্লিকেট জিমেইল চেক (বিগত ৩ দিন)
         duplicates = check_recent_duplicate_emails(valid_emails)
         if duplicates:
             dup_list = "\n".join([f"• {d}" for d in duplicates])
@@ -1709,7 +1715,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # নতুন জিমেইল সংরক্ষণ
         save_submitted_emails(valid_emails)
 
         emails_json = json.dumps(valid_emails)
@@ -1779,20 +1784,22 @@ def main():
 
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Commands
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("admin", admin))
-    application.add_handler(CommandHandler("setadmin", set_admin_cmd))
-    application.add_handler(CommandHandler("addbalance", add_balance_cmd))
-    application.add_handler(CommandHandler("cutbalance", cut_balance_cmd))
-    application.add_handler(CommandHandler("resetbalance", reset_balance_cmd))
+    # Commands (Private Only)
+    application.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("admin", admin, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("setadmin", set_admin_cmd, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("addbalance", add_balance_cmd, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("cutbalance", cut_balance_cmd, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("resetbalance", reset_balance_cmd, filters=filters.ChatType.PRIVATE))
 
     # Handlers
     application.add_handler(CallbackQueryHandler(withdrawal_method_handler, pattern=r"^method_"))
     application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, message_handler))
+    
+    # শুধুমাত্র প্রাইভেট চ্যাটে মেসেজ হ্যান্ডলার সচল থাকবে
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler))
 
-    print("Telegram bot is running...")
+    print("Telegram bot is running strictly in private chat mode...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
