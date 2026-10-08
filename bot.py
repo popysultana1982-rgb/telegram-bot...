@@ -41,13 +41,23 @@ WITHDRAW_FEE_PERCENT = 4
 REWARD_PER_EMAIL = 25.0  # প্রতি ভ্যালিড জিমেইলে ২৫ টাকা
 DAILY_FILE_LIMIT = 5
 MAX_EMAILS_PER_FILE = 5
-DUPLICATE_CHECK_DAYS = 3  # একবার দেওয়া জিমেইল ৩ দিন পর্যন্ত আর জমা দেওয়া যাবে না
+DUPLICATE_CHECK_DAYS = 3  # একবার দেওয়া জিমেইল ৩ দিন পর্যন্ত আর সাবমিট করা যাবে না
 
 REFERRAL_BONUS = 5.0
 USDT_RATE = 124.0
 
 DB_NAME = "bot.db"
 PORT = int(os.environ.get("PORT", 10000))
+
+# =========================================================
+# FORCE JOIN CHANNELS / GROUPS
+# =========================================================
+FORCE_CHANNEL_USERNAME = "@fast_payment_proof_chanel"
+FORCE_CHANNEL_LINK = "https://t.me/fast_payment_proof_chanel"
+
+FORCE_GROUP_LINK = "https://t.me/+rVP6CkmqrnFlNzA1"
+# আপনার প্রাইভেট গ্রুপের চ্যাট আইডি দিন (যেমন: -100xxxxxxxxxx)
+REQUIRED_GROUP_ID = os.getenv("REQUIRED_GROUP_ID", "") 
 
 
 # =========================================================
@@ -180,12 +190,14 @@ def create_rejected_excel(emails, title="Rejected Emails"):
 # =========================================================
 
 DEFAULT_MESSAGES = {
-    "rules": (
+    "welcome": (
         "আসসালামু আলাইকুম, {name}! 🌸\n\n"
         "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
-        "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করতে পারবেন।\n\n"
-        "📌 ৩টি ধাপে সাবমিশন যাচাই পদ্ধতি:\n"
-        "🔹 ধাপ ১: ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক রিসিভ করবেন এবং যে জিমেইলগুলো লগইন করা যায় সেগুলো পর্যালোচনায় রাখবেন। যেগুলোতে লগইন সমস্যা থাকবে সেগুলো ১ম ধাপেই বাতিল ও ফেরত দেওয়া হবে।\n"
+        "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করে নিরাপদভাবে টাকা ইনকাম করতে পারবেন।"
+    ),
+    "rules": (
+        "📜 **আমাদের জিমেইল সাবমিশন নিয়মাবলী:**\n\n"
+        "🔹 ধাপ ১: ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক রিসিভ করবেন এবং যে জিমেইলগুলো লগইন করা যায় সেগুলো পর্যালোচনায় রাখবেন। যেগুলোতে লগইন সমস্যা থাকবে সেগুলো ১ম ধাপেই বাতিল ও এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
         "🔹 ধাপ ২: পর্যালোচনায় রাখা জিমেইলগুলো পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে। এই সময়ে ব্যালেন্স যোগ হবে না।\n"
         "🔹 ধাপ ৩: ২৪ থেকে ৪৮ ঘণ্টা পর যে জিমেইলগুলো ঠিক থাকবে, সেগুলোর প্রতিটির জন্য ৳২৫ টাকা আপনার Balance-এ যোগ হয়ে যাবে! 💰\n"
         "🔹 আর শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n\n"
@@ -211,7 +223,8 @@ DEFAULT_MESSAGES = {
 }
 
 MESSAGE_NAMES = {
-    "rules": "📜 Rules & Welcome (3 Stages)",
+    "welcome": "🎉 Welcome Message (/start)",
+    "rules": "📜 Rules Message",
     "sell": "📤 Sell Gmail Instruction",
     "referral": "👥 Referral Message",
     "support": "📞 Support Text",
@@ -347,6 +360,44 @@ def increase_file_count(user_id):
 
 
 # =========================================================
+# FORCE JOIN VERIFICATION SYSTEM
+# =========================================================
+
+async def is_user_joined_all(bot, user_id):
+    """ইউজার দুটি গ্রুপ বা চ্যানেলেই জয়েন আছে কি না তা যাচাই করে"""
+    admin_id = get_admin_id()
+    if user_id == admin_id:
+        return True
+
+    # ১. চ্যানেল চেক
+    try:
+        member = await bot.get_chat_member(chat_id=FORCE_CHANNEL_USERNAME, user_id=user_id)
+        if member.status in ["left", "kicked"]:
+            return False
+    except Exception:
+        pass
+
+    # ২. গ্রুপ চেক (যদি আইডি দেওয়া থাকে)
+    if REQUIRED_GROUP_ID:
+        try:
+            member = await bot.get_chat_member(chat_id=REQUIRED_GROUP_ID, user_id=user_id)
+            if member.status in ["left", "kicked"]:
+                return False
+        except Exception:
+            pass
+
+    return True
+
+
+def get_force_join_markup():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 পেমেন্ট প্রুফ চ্যানেলে যুক্ত হন", url=FORCE_CHANNEL_LINK)],
+        [InlineKeyboardButton("👥 অফিসিয়াল গ্রুপে যুক্ত হন", url=FORCE_GROUP_LINK)],
+        [InlineKeyboardButton("🔄 চেক করুন / Joined", callback_data="check_joined")]
+    ])
+
+
+# =========================================================
 # VALIDATIONS (DUPLICATES, PHONE, BINANCE & GMAIL)
 # =========================================================
 
@@ -382,7 +433,6 @@ def validate_gmail_file(file_path):
 
 
 def check_recent_duplicate_emails(emails):
-    """বিগত ৩ দিনের মধ্যে এই জিমেইলগুলো জমা দেওয়া হয়েছিল কি না চেক করে"""
     cutoff_date = (datetime.now() - timedelta(days=DUPLICATE_CHECK_DAYS)).isoformat()
     placeholders = ",".join(["?"] * len(emails))
     query = f"""
@@ -397,7 +447,6 @@ def check_recent_duplicate_emails(emails):
 
 
 def save_submitted_emails(emails):
-    """নতুন জিমেইলগুলো ডুপ্লিকেট চেকারের টেবিলে সেভ করে"""
     now_str = datetime.now().isoformat()
     cur = db.cursor()
     cur.executemany("INSERT INTO submitted_emails (email, submitted_at) VALUES (?, ?)", [(e, now_str) for e in emails])
@@ -429,22 +478,12 @@ def get_bottom_keyboard():
 async def show_main_menu(update, context):
     user = update.effective_user
     add_user(user)
-    balance_bdt = get_balance(user.id)
-    balance_usdt = balance_bdt / USDT_RATE
 
     name = user.first_name or "User"
-    welcome_msg = get_custom_msg("rules").replace("{name}", name)
+    welcome_msg = get_custom_msg("welcome").replace("{name}", name)
 
-    balance_text = (
-        f"\n\n═══════════════════\n"
-        f"💰 Available Balance:\n"
-        f"🔹 ৳{balance_bdt:.2f} BDT\n"
-        f"🔹 ${balance_usdt:.2f} USDT\n"
-        f"═══════════════════\n\n"
-        f"নিচের বাটনগুলো চেপে অপশন নির্বাচন করুন:"
-    )
-
-    full_text = welcome_msg + balance_text
+    # ব্যালেন্স মুছে ফেলা হয়েছে
+    full_text = f"{welcome_msg}\n\nনিচের বাটনগুলো চেপে অপশন নির্বাচন করুন:"
 
     buttons = db_execute("SELECT * FROM buttons ORDER BY id DESC", fetchall=True)
     inline_kb = None
@@ -503,6 +542,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception:
             pass
+
+    # গ্রুপ ও চ্যানেলে জয়েন আছে কি না যাচাই
+    joined = await is_user_joined_all(context.bot, user.id)
+    if not joined:
+        join_msg = (
+            f"👋 আসসালামু আলাইকুম, {user.first_name}!\n\n"
+            f"⚠️ বটটি ব্যবহার করতে হলে আপনাকে আমাদের অফিশিয়াল গ্রুপ এবং পেমেন্ট চ্যানেলে যুক্ত থাকতে হবে।\n\n"
+            f"👇 নিচের দুটি লিংকে জয়েন হয়ে **'চেক করুন'** বাটনে চাপ দিন:"
+        )
+        await update.message.reply_text(join_msg, reply_markup=get_force_join_markup())
+        return
 
     await show_main_menu(update, context)
 
@@ -646,7 +696,7 @@ def build_stage_keyboard(sub_id, emails, selected_indices, stage_num):
             [InlineKeyboardButton(f"🚀 ধাপ ১ নিশ্চিত করুন ({len(selected_indices)}টি পর্যালোচনায় / {len(emails)-len(selected_indices)}টি বাতিল)", callback_data=f"sub_c1:{sub_id}")],
             [InlineKeyboardButton("❌ পুরো ফাইল বাতিল (Reject All)", callback_data=f"sub_reject_all:{sub_id}")]
         ]
-    else:  # stage_num == 3
+    else:
         action_rows = [
             [InlineKeyboardButton(f"💰 চূড়ান্ত অনুমোদন দিন ({len(selected_indices)}টি বৈধ - ৳{len(selected_indices)*25})", callback_data=f"sub_c3:{sub_id}")],
             [InlineKeyboardButton("✅ সবগুলোই ঠিক আছে", callback_data=f"sub_accept_all_s3:{sub_id}"),
@@ -662,6 +712,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     admin_id = get_admin_id()
     data = query.data
+
+    # ফোর্স জয়েন চেক বাটন
+    if data == "check_joined":
+        joined = await is_user_joined_all(context.bot, user_id)
+        if joined:
+            await query.message.delete()
+            await show_main_menu(update, context)
+        else:
+            await query.answer("❌ আপনি এখনো দুটি গ্রুপ/চ্যানেলে জয়েন করেননি! দয়া করে জয়েন হয়ে আবার চেক করুন।", show_alert=True)
+        return
 
     if data == "admin_panel":
         if user_id != admin_id:
@@ -723,7 +783,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["editing_msg_key"] = msg_key
         context.user_data["state"] = "waiting_new_msg_text"
         tips = ""
-        if msg_key == "rules":
+        if msg_key in ["rules", "welcome"]:
             tips = "\n💡 টিপস: লেখার মধ্যে `{name}` দিলে সেখানে ইউজারের নাম বসবে।"
         elif msg_key == "referral":
             tips = "\n💡 টিপস: লেখার মধ্যে `{link}` দিলে রেফারেল লিংক এবং `{bonus}` দিলে বোনাসের টাকা বসবে।"
@@ -1103,7 +1163,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # বাতিল হওয়া জিমেইলগুলো এক্সেল ফাইল (.xlsx) আকারে ফেরত পাঠানো
         if s1_rejected:
             bio = create_rejected_excel(s1_rejected)
             bio.name = f"rejected_stage1_{sub_id}.xlsx"
@@ -1196,7 +1255,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # ধাপ ৩-এ নষ্ট হওয়া জিমেইলগুলো এক্সেল ফাইল (.xlsx) আকারে ফেরত পাঠানো
         if final_rejected:
             bio = create_rejected_excel(final_rejected)
             bio.name = f"rejected_stage3_{sub_id}.xlsx"
@@ -1361,6 +1419,25 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
+    # ১. সাপোর্ট বাটন (ফোর্স জয়েন চেকের আওতামুক্ত)
+    if text == btn_sup:
+        sup_text = get_custom_msg("support")
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💬 মেসেজ পাঠান", url="https://t.me/Talha_juba098")]])
+        await update.message.reply_text(sup_text, reply_markup=keyboard)
+        return
+
+    # ২. অন্যান্য বাটনের ক্ষেত্রে ফোর্স জয়েন যাচাই
+    if user.id != admin_id:
+        joined = await is_user_joined_all(context.bot, user.id)
+        if not joined:
+            await update.message.reply_text(
+                "⚠️ **দুঃখিত!** বটের সুবিধাসমূহ ব্যবহার করতে হলে আপনাকে আমাদের গ্রুপ ও চ্যানেলে জয়েন থাকতে হবে।\n\n"
+                "নিচের লিংকে ক্লিক করে যুক্ত হয়ে 'চেক করুন' চাপুন:",
+                reply_markup=get_force_join_markup()
+            )
+            return
+
+    # Admin Settings
     if user.id == admin_id and state == "waiting_new_msg_text":
         key = context.user_data.get("editing_msg_key")
         if text:
@@ -1460,12 +1537,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = user.first_name or "User"
         rules = get_custom_msg("rules").replace("{name}", name)
         await update.message.reply_text(rules)
-        return
-
-    elif text == btn_sup:
-        sup_text = get_custom_msg("support")
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💬 মেসেজ পাঠান", url="https://t.me/Talha_juba098")]])
-        await update.message.reply_text(sup_text, reply_markup=keyboard)
         return
 
     # Admin actions
@@ -1638,7 +1709,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # নতুন জিমেইলগুলো ডাটাবেজে সংরক্ষণ
+        # নতুন জিমেইল সংরক্ষণ
         save_submitted_emails(valid_emails)
 
         emails_json = json.dumps(valid_emails)
