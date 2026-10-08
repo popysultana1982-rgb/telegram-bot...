@@ -147,7 +147,6 @@ def init_db():
         )
     """)
 
-    # ফাইল মেসেজ ট্র্যাকিং টেবিল (স্বয়ংক্রিয় রিমুভ করার জন্য)
     db_execute("""
         CREATE TABLE IF NOT EXISTS submission_admin_messages (
             sub_id INTEGER,
@@ -218,7 +217,7 @@ def set_config(key, val):
 
 def get_owner_id():
     res = db_execute("SELECT value FROM settings WHERE key='owner_id'", fetchone=True)
-    if res:
+    if res and res["value"]:
         try:
             return int(res["value"])
         except ValueError:
@@ -231,14 +230,16 @@ def set_owner_id(user_id):
 
 
 def is_admin(user_id):
-    if user_id == get_owner_id():
+    owner = get_owner_id()
+    if owner and int(user_id) == int(owner):
         return True
     helper = db_execute("SELECT user_id FROM helpers WHERE user_id=?", (user_id,), fetchone=True)
     return helper is not None
 
 
 def get_admin_name(user_id):
-    if user_id == get_owner_id():
+    owner = get_owner_id()
+    if owner and int(user_id) == int(owner):
         return "👑 Owner"
     helper = db_execute("SELECT admin_name FROM helpers WHERE user_id=?", (user_id,), fetchone=True)
     if helper and helper["admin_name"]:
@@ -268,22 +269,29 @@ def get_all_admins():
 
 
 async def notify_all_admins(context, message, exclude_user_id=None):
-    """টিমের সকল এডমিন ও ওনারের ইনবক্সে লাইভ আপডেট পাঠানো"""
+    """টিমের সকল এডমিন ও ওনারের ইনবক্সে ১০০% নির্ভরযোগ্যভাবে লাইভ আপডেট পাঠানো"""
     owner, helpers = get_all_admins()
     admin_list = []
     if owner:
-        admin_list.append(int(owner))
+        try:
+            admin_list.append(int(owner))
+        except (ValueError, TypeError):
+            pass
+
     for h in helpers:
-        admin_list.append(int(h["user_id"]))
+        try:
+            admin_list.append(int(h["user_id"]))
+        except (ValueError, TypeError):
+            pass
 
     unique_admins = list(set(admin_list))
     for a_id in unique_admins:
         if exclude_user_id and int(a_id) == int(exclude_user_id):
             continue
         try:
-            await context.bot.send_message(chat_id=a_id, text=message, parse_mode="Markdown")
-        except Exception:
-            pass
+            await context.bot.send_message(chat_id=int(a_id), text=message, parse_mode="Markdown")
+        except Exception as e:
+            print(f"Error notifying admin {a_id}: {e}")
 
 
 def is_maintenance_mode():
@@ -901,7 +909,8 @@ async def reset_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_admin_panel(query, user_id):
     m_status = "🔴 বট বন্ধ (Maintenance ON)" if is_maintenance_mode() else "🟢 বট চালু (Active)"
-    is_owner = (user_id == get_owner_id())
+    owner = get_owner_id()
+    is_owner = (owner and int(user_id) == int(owner))
 
     keyboard = [
         [InlineKeyboardButton(f"🛠 স্ট্যাটাস: {m_status}", callback_data="toggle_maintenance")],
@@ -1139,7 +1148,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ওনার কর্তৃক অ্যাডমিন ম্যানেজমেন্ট
     # -------------------------------------------------------------
     elif data == "owner_manage_admins":
-        if user_id != get_owner_id():
+        owner = get_owner_id()
+        if not owner or int(user_id) != int(owner):
             await query.answer("❌ শুধুমাত্র মূল মালিকের এক্সেস আছে!", show_alert=True)
             return
 
@@ -1160,7 +1170,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("👥 **যে অ্যাডমিনের নাম এডিট করতে চান তাকে নির্বাচন করুন:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data.startswith("edit_admin_name:"):
-        if user_id != get_owner_id():
+        owner = get_owner_id()
+        if not owner or int(user_id) != int(owner):
             return
         target_helper_id = int(data.split(":")[1])
         context.user_data["target_helper_id"] = target_helper_id
@@ -1442,7 +1453,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\nনিচের যেকোনো অপশনে ক্লিক করে বিস্তারিত দেখুন:", reply_markup=hist_kb, parse_mode="Markdown")
 
     # -------------------------------------------------------------
-    # ধাপ ১: রিসিভ করা এবং বাকি অ্যাডমিনদের থেকে ফাইল রিমুভ
+    # ধাপ ১: রিসিভ করা এবং বাকি সবার কাছে মেসেজ যাওয়া + ফাইল রিমুভ
     # -------------------------------------------------------------
     elif data.startswith("sub_s1_open:"):
         sub_id = int(data.split(":")[1])
@@ -1459,17 +1470,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db_execute("UPDATE submissions SET handled_by=? WHERE id=?", (rec_name, sub_id))
 
-        # বাকি সবার চ্যাট থেকে পূর্বের ফাইল মেসেজ রিমুভ করা
-        other_msgs = db_execute("SELECT admin_id, message_id FROM submission_admin_messages WHERE sub_id=?", (sub_id,), fetchall=True)
-        for om in other_msgs:
-            if int(om["admin_id"]) != int(user_id):
-                try:
-                    await context.bot.delete_message(chat_id=om["admin_id"], message_id=om["message_id"])
-                except Exception:
-                    pass
-
-        db_execute("DELETE FROM submission_admin_messages WHERE sub_id=?", (sub_id,))
-
+        # ১. যিনি রিসিভ করেছেন তিনি বাদে বাকিদের নোটিফিকেশন পাঠানো
         team_msg = (
             f"📢 **টিম আপডেট (#Submission_{sub_id})**\n\n"
             f"👤 ফাইল রিসিভ করেছেন: **{rec_name}**\n"
@@ -1477,6 +1478,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚡ প্রাথমিক বাছাই ও ভেরিফিকেশন শুরু হয়েছে।"
         )
         await notify_all_admins(context, team_msg, exclude_user_id=user_id)
+
+        # ২. বাকি সবার চ্যাট থেকে পূর্বের ফাইল মেসেজ রিমুভ করা
+        other_msgs = db_execute("SELECT admin_id, message_id FROM submission_admin_messages WHERE sub_id=?", (sub_id,), fetchall=True)
+        for om in other_msgs:
+            if int(om["admin_id"]) != int(user_id):
+                try:
+                    await context.bot.delete_message(chat_id=int(om["admin_id"]), message_id=int(om["message_id"]))
+                except Exception:
+                    pass
+
+        db_execute("DELETE FROM submission_admin_messages WHERE sub_id=?", (sub_id,))
 
         emails = json.loads(sub["emails_json"])
         if sub_id not in admin_stage1_selections:
@@ -1742,7 +1754,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Withdrawals (শুধুমাত্র ওনারের জন্য অনুমোদন/বাতিল)
     elif data.startswith("approve_withdraw:"):
-        if user_id != get_owner_id():
+        owner = get_owner_id()
+        if not owner or int(user_id) != int(owner):
             await query.answer("❌ শুধুমাত্র বটের মূল মালিক (Owner) উইথড্র অনুমোদন করতে পারেন!", show_alert=True)
             return
 
@@ -1771,7 +1784,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     elif data.startswith("reject_withdraw:"):
-        if user_id != get_owner_id():
+        owner = get_owner_id()
+        if not owner or int(user_id) != int(owner):
             await query.answer("❌ শুধুমাত্র বটের মূল মালিক (Owner) উইথড্র বাতিল করতে পারেন!", show_alert=True)
             return
 
@@ -2104,7 +2118,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-        # অফিসিয়াল গ্রুপে স্বয়ংক্রিয় পোস্ট (পেমেন্ট প্রুফ চ্যানেল বাদ দিয়ে)
         group_posted = False
         try:
             await context.bot.send_message(chat_id=FORCE_GROUP_CHAT_ID, text=text, parse_mode="Markdown")
@@ -2141,7 +2154,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     # ওনার কর্তৃক অ্যাডমিন নাম এডিট
-    if user.id == get_owner_id() and state == "waiting_helper_new_name":
+    owner = get_owner_id()
+    if owner and int(user.id) == int(owner) and state == "waiting_helper_new_name":
         target_id = context.user_data.get("target_helper_id")
         if text:
             set_helper_name(target_id, text)
@@ -2338,7 +2352,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: {text}\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)")
 
-        # শুধুমাত্র মূল ওনারের (Owner) কাছে উইথড্র রিকোয়েস্ট পাঠানো
+        # শুধুমাত্র মূল ওনারের কাছে মেসেজ যাবে
         owner_id = get_owner_id()
         if owner_id:
             keyboard = InlineKeyboardMarkup([
@@ -2347,7 +2361,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
             try:
                 await context.bot.send_message(
-                    chat_id=owner_id,
+                    chat_id=int(owner_id),
                     text=(
                         f"🔔 **নতুন উইথড্র রিকোয়েস্ট (Owner Only)** (#{w_id})\n\n"
                         f"👤 ইউজার: `{user.id}`\n"
@@ -2363,7 +2377,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         return
 
-    # ফাইল রিসিভ ও ডাটাবেজে মেসেজ ট্র্যাকিং (রিমুভ করার জন্য)
+    # ফাইল রিসিভ ও মেসেজ ট্র্যাকিং
     if state == "waiting_file":
         doc = update.message.document
         if not doc:
@@ -2433,7 +2447,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         owner, helpers = get_all_admins()
-        all_admin_ids = [owner] + [h["user_id"] for h in helpers] if owner else [h["user_id"] for h in helpers]
+        admin_list = []
+        if owner:
+            try:
+                admin_list.append(int(owner))
+            except (ValueError, TypeError):
+                pass
+        for h in helpers:
+            try:
+                admin_list.append(int(h["user_id"]))
+            except (ValueError, TypeError):
+                pass
+        all_admin_ids = list(set(admin_list))
 
         mail_preview = "\n".join([f"{i+1}. {m}" for i, m in enumerate(valid_emails)])
         admin_kb = InlineKeyboardMarkup([
@@ -2444,7 +2469,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for a_id in all_admin_ids:
             try:
                 sent_msg = await context.bot.send_document(
-                    chat_id=a_id,
+                    chat_id=int(a_id),
                     document=doc.file_id,
                     caption=(
                         f"📁 নতুন জিমেইল সাবমিশন (#{sub_id})\n"
@@ -2456,7 +2481,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 db_execute(
                     "INSERT INTO submission_admin_messages (sub_id, admin_id, message_id) VALUES (?, ?, ?)",
-                    (sub_id, a_id, sent_msg.message_id)
+                    (sub_id, int(a_id), sent_msg.message_id)
                 )
             except Exception:
                 pass
@@ -2494,7 +2519,6 @@ def main():
 
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Commands (Strictly Private Chat)
     application.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
     application.add_handler(CommandHandler("admin", admin, filters=filters.ChatType.PRIVATE))
     application.add_handler(CommandHandler("setadmin", set_admin_cmd, filters=filters.ChatType.PRIVATE))
@@ -2505,11 +2529,9 @@ def main():
     application.add_handler(CommandHandler("cutbalance", cut_balance_cmd, filters=filters.ChatType.PRIVATE))
     application.add_handler(CommandHandler("resetbalance", reset_balance_cmd, filters=filters.ChatType.PRIVATE))
 
-    # Handlers
     application.add_handler(CallbackQueryHandler(withdrawal_method_handler, pattern=r"^method_"))
     application.add_handler(CallbackQueryHandler(button_handler))
     
-    # Message Handler (Strictly Private Chat)
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler))
 
     print("Gmail Sell Bot is running safely in private chat mode...")
