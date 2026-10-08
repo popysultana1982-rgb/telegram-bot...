@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import os
@@ -443,32 +444,36 @@ def increase_file_count(user_id):
 
 
 # =========================================================
-# SAFE FORCE JOIN CHAT-ID VERIFICATION SYSTEM
+# ASYNC SAFE MEMBERSHIP CHECKER
 # =========================================================
 
 async def is_user_joined_all(bot, user_id):
-    """ক্র্যাশ প্রতিরোধক নিরাপদ মেম্বারশিপ চেকার"""
+    """টাইমআউট ও এরর-প্রটেক্টেড মেম্বারশিপ চেকার"""
     if is_admin(user_id):
         return True
 
-    # ১. পেমেন্ট প্রুফ চ্যানেল যাচাই
-    try:
-        member = await bot.get_chat_member(chat_id=FORCE_CHANNEL_CHAT_ID, user_id=user_id)
-        if member.status in ["left", "kicked"]:
+    async def check_channel():
+        try:
+            m = await bot.get_chat_member(chat_id=FORCE_CHANNEL_CHAT_ID, user_id=user_id)
+            return m.status not in ["left", "kicked"]
+        except Exception:
             return False
-    except Exception:
-        # নতুন ইউজার জয়েন না থাকা অবস্থায় টেলিগ্রাম এরর দিলে সেফলি ফলস রিটার্ন করবে
-        return False
 
-    # ২. অফিশিয়াল গ্রুপ যাচাই
-    try:
-        member = await bot.get_chat_member(chat_id=FORCE_GROUP_CHAT_ID, user_id=user_id)
-        if member.status in ["left", "kicked"]:
+    async def check_group():
+        try:
+            m = await bot.get_chat_member(chat_id=FORCE_GROUP_CHAT_ID, user_id=user_id)
+            return m.status not in ["left", "kicked"]
+        except Exception:
             return False
+
+    try:
+        ch_joined, gr_joined = await asyncio.wait_for(
+            asyncio.gather(check_channel(), check_group()),
+            timeout=2.5
+        )
+        return ch_joined and gr_joined
     except Exception:
         return False
-
-    return True
 
 
 def get_first_time_markup():
@@ -494,7 +499,7 @@ def get_rejoin_markup():
 
 BD_PHONE_REGEX = re.compile(r"^01[3-9]\d{8}$")
 BINANCE_UID_REGEX = re.compile(r"^\d{7,10}$")
-GMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@gmail\.com$", re.IGNORECASE)
+GMAIL_REGEX = re.compile(r"^[\w.+-]+@gmail\.com$", re.IGNORECASE)
 
 
 def validate_gmail_file(file_path):
@@ -597,60 +602,70 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = update.effective_user
-    if is_maintenance_mode() and not is_admin(user.id):
-        await update.message.reply_text(get_custom_msg("maintenance"))
+    if not user:
         return
 
-    context.user_data.clear()
+    try:
+        if is_maintenance_mode() and not is_admin(user.id):
+            await update.message.reply_text(get_custom_msg("maintenance"))
+            return
 
-    # রেফারেল ট্র্যাকিং
-    referrer_id = None
-    if context.args and len(context.args) > 0:
-        try:
-            potential_ref = int(context.args[0])
-            if potential_ref != user.id and get_user(potential_ref):
-                referrer_id = potential_ref
-        except ValueError:
-            referrer_id = None
+        context.user_data.clear()
 
-    is_new = add_user(user, referrer_id)
-    if is_new and referrer_id:
-        update_balance(referrer_id, REFERRAL_BONUS)
+        referrer_id = None
+        if context.args and len(context.args) > 0:
+            try:
+                potential_ref = int(context.args[0])
+                if potential_ref != user.id and get_user(potential_ref):
+                    referrer_id = potential_ref
+            except ValueError:
+                referrer_id = None
+
+        is_new = add_user(user, referrer_id)
+        if is_new and referrer_id:
+            update_balance(referrer_id, REFERRAL_BONUS)
+            try:
+                await context.bot.send_message(
+                    chat_id=referrer_id,
+                    text=f"🎉 আপনার একটি নতুন রেফার সফল হয়েছে! বোনাস: +৳{REFERRAL_BONUS:.2f} BDT"
+                )
+            except Exception:
+                pass
+
+        u_data = get_user(user.id)
+        seen_rules = u_data["seen_rules"] if u_data else 0
+
+        joined = await is_user_joined_all(context.bot, user.id)
+
+        if joined:
+            await show_main_menu(update, context)
+            return
+
+        if not seen_rules:
+            name = user.first_name or "User"
+            welcome_text = get_custom_msg("welcome").replace("{name}", name)
+
+            await update.message.reply_text(
+                f"{welcome_text}\n\n👇 **বট চালু করতে নিচের চ্যানেল ও গ্রুপে যুক্ত হয়ে ভেরিফাই বাটনে চাপ দিন:**",
+                reply_markup=get_first_time_markup(),
+                parse_mode="Markdown"
+            )
+            return
+
+        await update.message.reply_text(
+            "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:",
+            reply_markup=get_rejoin_markup()
+        )
+
+    except Exception as e:
+        print(f"Error in start: {e}")
         try:
-            await context.bot.send_message(
-                chat_id=referrer_id,
-                text=f"🎉 আপনার একটি নতুন রেফার সফল হয়েছে! বোনাস: +৳{REFERRAL_BONUS:.2f} BDT"
+            await update.message.reply_text(
+                "স্বাগতম! নিচের বাটনগুলো চেপে আমাদের চ্যানেল ও গ্রুপে যুক্ত হয়ে ভেরিফাই করুন:",
+                reply_markup=get_rejoin_markup()
             )
         except Exception:
             pass
-
-    u_data = get_user(user.id)
-    seen_rules = u_data["seen_rules"] if u_data else 0
-
-    joined = await is_user_joined_all(context.bot, user.id)
-
-    # ১. ইউজার জয়েন থাকলে সরাসরি কাজের মেনু
-    if joined:
-        await show_main_menu(update, context)
-        return
-
-    # ২. ইউজার নতুন হলে বিস্তারিত সালাম ও ৮টি নিয়মাবলী
-    if not seen_rules:
-        name = user.first_name or "User"
-        welcome_text = get_custom_msg("welcome").replace("{name}", name)
-
-        await update.message.reply_text(
-            f"{welcome_text}\n\n👇 **বট চালু করতে নিচের চ্যানেল ও গ্রুপে যুক্ত হয়ে ভেরিফাই বাটনে চাপ দিন:**",
-            reply_markup=get_first_time_markup(),
-            parse_mode="Markdown"
-        )
-        return
-
-    # ৩. ইউজার আগে রুলস দেখেছে কিন্তু বের হয়ে গেছে -> সরাসরি ৩টি বাটন
-    await update.message.reply_text(
-        "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:",
-        reply_markup=get_rejoin_markup()
-    )
 
 
 async def set_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -842,7 +857,6 @@ async def show_admin_panel(query, user_id):
         [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")]
     ]
 
-    # শুধুমাত্র মূল মালিকের প্যানেলে নাম এডিট ও ম্যানেজমেন্ট বাটন থাকবে
     if is_owner:
         keyboard.append([InlineKeyboardButton("👥 অ্যাডমিন তালিকা ও নাম এডিট (Owner Only)", callback_data="owner_manage_admins")])
 
@@ -890,7 +904,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
-    # ভেরিফাই বাটন হ্যান্ডলিং
     if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         if joined:
@@ -901,7 +914,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ আপনি এখনো জয়েন করেননি! চ্যানেল ও গ্রুপে জয়েন হয়ে আবার ভেরিফাই চাপুন।", show_alert=True)
         return
 
-    # অ্যাডমিন এক্সেস চেক
     if not is_admin(user_id):
         return
 
@@ -917,9 +929,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(msg, show_alert=True)
         await show_admin_panel(query, user_id)
 
-    # -------------------------------------------------------------
-    # ওনার কর্তৃক অ্যাডমিন ম্যানেজমেন্ট
-    # -------------------------------------------------------------
     elif data == "owner_manage_admins":
         if user_id != get_owner_id():
             await query.answer("❌ শুধুমাত্র মূল মালিকের এক্সেস আছে!", show_alert=True)
@@ -1072,9 +1081,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
         )
 
-    # -------------------------------------------------------------
-    # অ্যাডমিন ফাইল হিস্ট্রি ও ডিলিট
-    # -------------------------------------------------------------
     elif data.startswith("admin_file_history:"):
         page = int(data.split(":")[1])
         limit = 5
@@ -1179,9 +1185,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.answer("এক্সেল ফাইল পাঠানো হয়েছে!")
 
-    # -------------------------------------------------------------
-    # ইউজার হিস্ট্রি
-    # -------------------------------------------------------------
     elif data == "user_hist_live":
         subs = db_execute(
             "SELECT * FROM submissions WHERE user_id=? AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
@@ -1246,9 +1249,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
         await query.edit_message_text("📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\nনিচের যেকোনো অপশনে ক্লিক করে বিস্তারিত দেখুন:", reply_markup=hist_kb, parse_mode="Markdown")
 
-    # -------------------------------------------------------------
-    # ধাপ ১: রিসিভ ও লাইভ অ্যাডমিন নোটিফিকেশন সিস্টেম
-    # -------------------------------------------------------------
     elif data.startswith("sub_s1_open:"):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
@@ -1546,7 +1546,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    # Withdrawals
     elif data.startswith("approve_withdraw:"):
         w_id = int(data.split(":")[1])
         w = db_execute("SELECT * FROM withdrawals WHERE id=?", (w_id,), fetchone=True)
@@ -1624,14 +1623,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
-    # ১. সাপোর্ট বাটন সবসময় সবার জন্য উন্মুক্ত
     if text == btn_sup:
         sup_text = get_custom_msg("support")
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💬 সরাসরি মেসেজ পাঠান / Support", url=SUPPORT_URL)]])
         await update.message.reply_text(sup_text, reply_markup=keyboard)
         return
 
-    # ২. অন্যান্য বাটনের ক্ষেত্রে ফোর্স জয়েন যাচাই
     if not is_admin(user.id):
         joined = await is_user_joined_all(context.bot, user.id)
         if not joined:
@@ -1641,7 +1638,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # ওনার কর্তৃক সহযোগী অ্যাডমিনের নাম এডিট
     if user.id == get_owner_id() and state == "waiting_helper_new_name":
         target_id = context.user_data.get("target_helper_id")
         if text:
@@ -1650,7 +1646,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ সফল হয়েছে! অ্যাডমিন `{target_id}` এর নাম পরিবর্তন করে **{text}** রাখা হয়েছে।", parse_mode="Markdown")
         return
 
-    # Admin Settings Handlers
     if is_admin(user.id) and state == "waiting_new_email_rate":
         try:
             new_r = float(text)
@@ -1680,7 +1675,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}")
         return
 
-    # ইউজার হিস্ট্রি মেনু বাটন
     if text == btn_hist:
         hist_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
@@ -1765,7 +1759,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(rules)
         return
 
-    # Admin actions
     if is_admin(user.id) and state == "admin_add_button_title":
         context.user_data["button_title"] = text
         context.user_data["state"] = "admin_add_button_url"
@@ -1814,7 +1807,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return
 
-    # Withdraw input
     if state == "withdraw_amount":
         try:
             amount = float(text)
@@ -1891,7 +1883,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         return
 
-    # File input
     if state == "waiting_file":
         doc = update.message.document
         if not doc:
@@ -1930,7 +1921,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # ডুপ্লিকেট জিমেইল চেক
         duplicates = check_recent_duplicate_emails(valid_emails)
         if duplicates:
             dup_list = "\n".join([f"• {d}" for d in duplicates])
