@@ -39,10 +39,11 @@ ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "mysecretadmin123")
 DB_NAME = "bot.db"
 PORT = int(os.environ.get("PORT", 10000))
 
-# ডিফল্ট চ্যানেল ও গ্রুপ
+# অফিসিয়াল গ্রুপ (যেখানে ব্রডকাস্ট পোস্ট হবে)
 FORCE_GROUP_CHAT_ID = -1004471047712
 FORCE_GROUP_LINK = "https://t.me/+rVP6CkmqrnFlNzA1"
 
+# পেমেন্ট প্রুফ চ্যানেল (যেখানে ব্রডকাস্ট যাবে না)
 FORCE_CHANNEL_CHAT_ID = -1003991468184
 FORCE_CHANNEL_LINK = "https://t.me/fast_payment_proof_chanel"
 
@@ -106,15 +107,14 @@ def init_db():
         )
     """)
 
-    # ডায়নামিক বাটন এবং সাব-বাটন টেবিল (বড় কীবোর্ড ও ইনলাইন উভয়ই সাপোর্ট করবে)
     db_execute("""
         CREATE TABLE IF NOT EXISTS dynamic_buttons (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             parent_id INTEGER DEFAULT 0,
             title TEXT NOT NULL,
-            btn_type TEXT NOT NULL, -- 'url' or 'message'
+            btn_type TEXT NOT NULL,
             content TEXT NOT NULL,
-            show_in_reply INTEGER DEFAULT 1 -- ১ হলে নিচের বড় কীবোর্ডে থাকবে
+            show_in_reply INTEGER DEFAULT 1
         )
     """)
 
@@ -147,6 +147,15 @@ def init_db():
         )
     """)
 
+    # ফাইল মেসেজ ট্র্যাকিং টেবিল (স্বয়ংক্রিয় রিমুভ করার জন্য)
+    db_execute("""
+        CREATE TABLE IF NOT EXISTS submission_admin_messages (
+            sub_id INTEGER,
+            admin_id INTEGER,
+            message_id INTEGER
+        )
+    """)
+
     db_execute("""
         CREATE TABLE IF NOT EXISTS submitted_emails (
             email TEXT,
@@ -171,7 +180,7 @@ def init_db():
 
 
 # =========================================================
-# DYNAMIC SETTINGS & LIMITS HELPER
+# CONFIG HELPERS
 # =========================================================
 
 CONFIG_DEFAULTS = {
@@ -258,6 +267,25 @@ def get_all_admins():
     return owner, helpers
 
 
+async def notify_all_admins(context, message, exclude_user_id=None):
+    """টিমের সকল এডমিন ও ওনারের ইনবক্সে লাইভ আপডেট পাঠানো"""
+    owner, helpers = get_all_admins()
+    admin_list = []
+    if owner:
+        admin_list.append(int(owner))
+    for h in helpers:
+        admin_list.append(int(h["user_id"]))
+
+    unique_admins = list(set(admin_list))
+    for a_id in unique_admins:
+        if exclude_user_id and int(a_id) == int(exclude_user_id):
+            continue
+        try:
+            await context.bot.send_message(chat_id=a_id, text=message, parse_mode="Markdown")
+        except Exception:
+            pass
+
+
 def is_maintenance_mode():
     return get_config("maintenance", int) == 1
 
@@ -272,13 +300,17 @@ def toggle_maintenance_mode():
 # EXCEL GENERATOR HELPER
 # =========================================================
 
-def create_rejected_excel(emails):
+def create_rejected_excel(rejected_items):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Rejected"
     ws.append(["Index", "Rejected Gmail Account", "Reason"])
-    for i, em in enumerate(emails, 1):
-        ws.append([i, em, "Login issue or invalid on check"])
+    for i, item in enumerate(rejected_items, 1):
+        if isinstance(item, tuple):
+            em, r_text = item
+        else:
+            em, r_text = item, "Invalid on check"
+        ws.append([i, em, r_text])
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -296,21 +328,21 @@ DEFAULT_MESSAGES = {
         "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করে নিরাপদভাবে টাকা ইনকাম করতে পারবেন।\n\n"
         "📜 **আমাদের জিমেইল সাবমিশন ও কাজের নিয়মাবলী:**\n"
         "১. ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই করবেন এবং লগইন করা যায় এমন মেইলগুলো পর্যালোচনায় রাখবেন।\n"
-        "২. প্রাথমিক বাছায়ে যেসব জিমেইলে লগইন সমস্যা থাকবে, সেগুলো সাথে সাথে বাতিল করে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
+        "২. প্রাথমিক বাছায়ে যেসব জিমেইলে সমস্যা থাকবে, সেগুলো কারণসহ সাথে সাথে বাতিল করে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
         "৩. পর্যালোচনায় রাখা জিমেইলগুলো পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে।\n"
         "৪. ২৪ থেকে ৪৮ ঘণ্টার পর্যবেক্ষণ সময়ে ব্যালেন্স যোগ হবে না।\n"
         "৫. পর্যবেক্ষণ শেষে যেসব জিমেইল অক্ষত থাকবে, প্রতিটির জন্য ৳{rate} টাকা ব্যালেন্সে যোগ হবে! 💰\n"
-        "৬. শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
+        "৬. শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে কারণসহ এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
         "৭. প্রতিদিন সর্বোচ্চ {daily_limit}টি ফাইল এবং প্রতি ফাইলে সর্বোচ্চ {email_limit}টি ভ্যালিড Gmail দিতে পারবেন।\n"
         "৮. একবার জমা দেওয়া জিমেইল আগামী {cooldown} দিনের মধ্যে পুনরায় সাবমিট করা যাবে না।"
     ),
     "rules": (
         "📜 **আমাদের কাজের নিয়মাবলী ও শর্তাবলী:**\n\n"
         "১. ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই সম্পন্ন করবেন।\n"
-        "২. লগইন সমস্যা থাকা জিমেইল ১ম ধাপেই বাতিল ও এক্সেল ফাইলে ফেরত যাবে।\n"
+        "২. সমস্যা থাকা জিমেইল ১ম ধাপেই নির্দিষ্ট কারণসহ বাতিল ও এক্সেল ফাইলে ফেরত যাবে।\n"
         "৩. নির্বাচিত জিমেইলগুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণে থাকবে।\n"
         "৪. পর্যবেক্ষণ শেষে সঠিক প্রতি জিমেইলে ৳{rate} টাকা ব্যালেন্সে যোগ হবে।\n"
-        "৫. শেষ ধাপে নষ্ট হওয়া মেইলগুলো এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
+        "৫. শেষ ধাপে নষ্ট হওয়া মেইলগুলো কারণসহ এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
         "৬. এক ফাইলে সর্বোচ্চ {email_limit}টি @gmail.com এবং দিনে সর্বোচ্চ {daily_limit}টি ফাইল দেওয়া যাবে।\n"
         "৭. বিগত {cooldown} দিনের মধ্যে জমা দেওয়া জিমেইল পুনরায় গ্রহণযোগ্য নয়।"
     ),
@@ -556,7 +588,6 @@ def save_submitted_emails(emails):
 # =========================================================
 
 def get_bottom_keyboard():
-    """ডিফল্ট বাটন এবং অ্যাডমিন কর্তৃক যুক্ত ডায়নামিক বড় কীবোর্ড বাটন"""
     btn_sell = get_button_title("sell", "📤 SELL FRESH GMAIL ACCOUNT")
     btn_bal = get_button_title("balance", "💰 BALANCE")
     btn_wd = get_button_title("withdraw", "💸 WITHDRAW")
@@ -572,7 +603,6 @@ def get_bottom_keyboard():
         [KeyboardButton(btn_rules), KeyboardButton(btn_sup)]
     ]
 
-    # ডাটাবেজ থেকে কাস্টম বড় কীবোর্ড বাটন আনা
     custom_reply_btns = db_execute("SELECT title FROM dynamic_buttons WHERE parent_id=0 AND show_in_reply=1 ORDER BY id ASC", fetchall=True)
     if custom_reply_btns:
         row = []
@@ -588,7 +618,6 @@ def get_bottom_keyboard():
 
 
 def build_dynamic_sub_markup(parent_id):
-    """বাটনের ভেতরের সাব-বাটন ও নেস্টেড মেনু"""
     btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=? ORDER BY id ASC", (parent_id,), fetchall=True)
     if not btns:
         return None
@@ -609,7 +638,6 @@ async def show_main_menu(update, context):
 
     msg_text = "🎉 **আপনি আমাদের সাথে সফলভাবে যুক্ত আছেন।**\n\nনিচের বাটনগুলো চেপে আপনার অপশন বেছে নিন:"
 
-    # লিংক জাতীয় কোনো বাটন থাকলে নিচে ইনলাইন আকারে প্রদর্শন
     url_btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=0 AND btn_type='url' ORDER BY id ASC", fetchall=True)
     inline_kb = None
     if url_btns:
@@ -898,7 +926,7 @@ async def show_admin_panel(query, user_id):
 
 
 # =========================================================
-# CALLBACK HANDLER
+# STAGE KEYBOARDS & REASON SELECTOR
 # =========================================================
 
 admin_stage1_selections = {}
@@ -917,17 +945,30 @@ def build_stage_keyboard(sub_id, emails, selected_indices, stage_num):
     if stage_num == 1:
         action_rows = [
             [InlineKeyboardButton(f"🚀 ধাপ ১ নিশ্চিত করুন ({len(selected_indices)}টি পর্যালোচনায় / {len(emails)-len(selected_indices)}টি বাতিল)", callback_data=f"sub_c1:{sub_id}")],
-            [InlineKeyboardButton("❌ পুরো ফাইল বাতিল (Reject All)", callback_data=f"sub_reject_all:{sub_id}")]
+            [InlineKeyboardButton("❌ পুরো ফাইল বাতিল (Reject All)", callback_data=f"sub_rj_all_prompt:{stage_num}:{sub_id}")]
         ]
     else:
         action_rows = [
             [InlineKeyboardButton(f"💰 চূড়ান্ত অনুমোদন দিন ({len(selected_indices)}টি বৈধ - ৳{len(selected_indices)*rate:.2f})", callback_data=f"sub_c3:{sub_id}")],
             [InlineKeyboardButton("✅ সবগুলোই ঠিক আছে", callback_data=f"sub_accept_all_s3:{sub_id}"),
-             InlineKeyboardButton("❌ সবগুলোই নষ্ট (বাতিল)", callback_data=f"sub_reject_all_s3:{sub_id}")]
+             InlineKeyboardButton("❌ পুরো ফাইল বাতিল (Reject All)", callback_data=f"sub_rj_all_prompt:{stage_num}:{sub_id}")]
         ]
 
     return InlineKeyboardMarkup(chunked + action_rows)
 
+
+def build_reason_selection_keyboard(stage_num, sub_id, current_email_idx, total_rejected_count):
+    kb = [
+        [InlineKeyboardButton("🔴 পাসওয়ার্ড ভুল / ইনভ্যালিড ক্রেডেনশিয়াল", callback_data=f"sub_rs_set:{stage_num}:{sub_id}:{current_email_idx}:opt1")],
+        [InlineKeyboardButton("🔴 অ্যাকাউন্ট ডিজেবল্ড অথবা সাসপেন্ডেড", callback_data=f"sub_rs_set:{stage_num}:{sub_id}:{current_email_idx}:opt2")],
+        [InlineKeyboardButton("✍️ কাস্টম কারণ লিখুন", callback_data=f"sub_rs_custom:{stage_num}:{sub_id}:{current_email_idx}")]
+    ]
+    return InlineKeyboardMarkup(kb)
+
+
+# =========================================================
+# CALLBACK HANDLER
+# =========================================================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1027,7 +1068,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"✍️ **{names.get(cfg_key, cfg_key)}** এর নতুন মান লিখে পাঠিয়ে দিন:\n\n(বাতিল করতে /cancel পাঠান)")
 
     # -------------------------------------------------------------
-    # বড় কীবোর্ড ও ডায়নামিক বাটন ম্যানেজার (Item by Item)
+    # বড় কীবোর্ড ও ডায়নামিক বাটন বিল্ডার
     # -------------------------------------------------------------
     elif data.startswith("dyn_manage:"):
         p_id = int(data.split(":")[1])
@@ -1203,7 +1244,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "admin_broadcast":
         context.user_data["state"] = "admin_broadcast"
-        await query.edit_message_text("📢 ব্রডকাস্ট করার মেসেজটি লিখে পাঠান:")
+        await query.edit_message_text("📢 ব্রডকাস্ট করার মেসেজটি লিখে পাঠান:\n(এটি সকল ইউজারের ইনবক্সে এবং অফিসিয়াল গ্রুপে চলে যাবে)")
 
     elif data == "admin_single_message":
         context.user_data["state"] = "admin_single_user"
@@ -1227,7 +1268,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # -------------------------------------------------------------
-    # অ্যাডমিন ফাইল হিস্ট্রি ও ডিলিট
+    # অ্যাডমিন ফাইল হিস্ট্রি ও রিপোর্ট
     # -------------------------------------------------------------
     elif data.startswith("admin_file_history:"):
         page = int(data.split(":")[1])
@@ -1401,13 +1442,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\nনিচের যেকোনো অপশনে ক্লিক করে বিস্তারিত দেখুন:", reply_markup=hist_kb, parse_mode="Markdown")
 
     # -------------------------------------------------------------
-    # ধাপ ১ ও ধাপ ৩ সাবমিশন লজিক
+    # ধাপ ১: রিসিভ করা এবং বাকি অ্যাডমিনদের থেকে ফাইল রিমুভ
     # -------------------------------------------------------------
     elif data.startswith("sub_s1_open:"):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
         if not sub or sub["status"] != "pending":
-            await query.answer("ফাইলটি অলরেডি প্রসেস করা হয়েছে!", show_alert=True)
+            await query.answer("ফাইলটি অলরেডি অন্য একজন প্রসেস করছেন!", show_alert=True)
             return
 
         rec_name = get_admin_name(user_id)
@@ -1418,19 +1459,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db_execute("UPDATE submissions SET handled_by=? WHERE id=?", (rec_name, sub_id))
 
-        owner, helpers = get_all_admins()
-        all_admin_ids = [owner] + [h["user_id"] for h in helpers] if owner else [h["user_id"] for h in helpers]
-
-        for a_id in all_admin_ids:
-            if a_id != user_id:
+        # বাকি সবার চ্যাট থেকে পূর্বের ফাইল মেসেজ রিমুভ করা
+        other_msgs = db_execute("SELECT admin_id, message_id FROM submission_admin_messages WHERE sub_id=?", (sub_id,), fetchall=True)
+        for om in other_msgs:
+            if int(om["admin_id"]) != int(user_id):
                 try:
-                    await context.bot.send_message(
-                        chat_id=a_id,
-                        text=f"📢 **টিম আপডেট (#Submission_{sub_id}):**\nফাইলটি রিসিভ করে প্রাথমিক যাচাই শুরু করেছেন: **{rec_name}**",
-                        parse_mode="Markdown"
-                    )
+                    await context.bot.delete_message(chat_id=om["admin_id"], message_id=om["message_id"])
                 except Exception:
                     pass
+
+        db_execute("DELETE FROM submission_admin_messages WHERE sub_id=?", (sub_id,))
+
+        team_msg = (
+            f"📢 **টিম আপডেট (#Submission_{sub_id})**\n\n"
+            f"👤 ফাইল রিসিভ করেছেন: **{rec_name}**\n"
+            f"🆔 ইউজার: `{sub['user_id']}`\n"
+            f"⚡ প্রাথমিক বাছাই ও ভেরিফিকেশন শুরু হয়েছে।"
+        )
+        await notify_all_admins(context, team_msg, exclude_user_id=user_id)
 
         emails = json.loads(sub["emails_json"])
         if sub_id not in admin_stage1_selections:
@@ -1479,6 +1525,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_reply_markup(reply_markup=kb)
 
+    # -------------------------------------------------------------
+    # ধাপ ১ কনফার্মেশন ও রিজেকশন কারণ উইজার্ড
+    # -------------------------------------------------------------
     elif data.startswith("sub_c1:"):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
@@ -1495,58 +1544,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("কমপক্ষে একটি জিমেইল পর্যালোচনায় রাখতে হবে!", show_alert=True)
             return
 
-        db_execute("""
-            UPDATE submissions 
-            SET status='stage2_review', in_review_json=?, rejected_count=?
-            WHERE id=?
-        """, (json.dumps(in_review_emails), len(s1_rejected), sub_id))
-
-        admin_stage1_selections.pop(sub_id, None)
-        rate = get_config("email_rate", float)
-
-        next_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"🔍 ধাপ ৩: চূড়ান্ত অনুমোদন দিন ({len(in_review_emails)}টি)", callback_data=f"sub_s3_open:{sub_id}")],
-            [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_reject_all:{sub_id}")]
-        ])
-
-        h_by = sub["handled_by"] or get_admin_name(user_id)
-        await query.edit_message_caption(
-            caption=(
-                f"⏳ **ধাপ ১ সম্পন্ন - ধাপ ২ (২৪-৪৮ ঘণ্টা পর্যবেক্ষণ চলছে)** (#{sub_id})\n\n"
-                f"👤 ইউজার: {sub['user_id']}\n"
-                f"🔒 রিসিভ করেছিলেন: **{h_by}**\n"
-                f"🔹 পর্যালোচনায় নেওয়া হয়েছে: {len(in_review_emails)} টি\n"
-                f"🔹 লগইন না হওয়ায় বাতিল: {len(s1_rejected)} টি\n\n"
-                f"২৪ থেকে ৪৮ ঘণ্টা পর নিচের বাটনে চাপ দিয়ে চূড়ান্ত যাচাই করুন।"
-            ),
-            reply_markup=next_kb,
-            parse_mode="Markdown"
-        )
-
-        user_msg = (
-            f"📋 **আপনার জিমেইল সাবমিশনের ১ম ধাপের আপডেট!** (#{sub_id})\n\n"
-            f"🔹 পর্যালোচনায় রাখা হয়েছে: {len(in_review_emails)} টি\n"
-            f"❌ লগইন না হওয়ায় বাতিল: {len(s1_rejected)} টি\n\n"
-            f"📌 **জরুরি তথ্য:** পর্যালোচনায় থাকা {len(in_review_emails)}টি জিমেইল আগামী **২৪ থেকে ৪৮ ঘণ্টা** পর্যবেক্ষণে থাকবে। "
-            f"পর্যবেক্ষণ শেষে যে জিমেইলগুলো ঠিক থাকবে, প্রতিটির জন্য ৳{rate:.2f} টাকা আপনার ব্যালেন্সে যোগ হবে।"
-        )
-        try:
-            await context.bot.send_message(chat_id=sub["user_id"], text=user_msg)
-        except Exception:
-            pass
-
         if s1_rejected:
-            bio = create_rejected_excel(s1_rejected)
-            bio.name = f"rejected_stage1_{sub_id}.xlsx"
-            try:
-                await context.bot.send_document(
-                    chat_id=sub["user_id"],
-                    document=bio,
-                    caption=f"⚠️ {len(s1_rejected)}টি জিমেইলে লগইন সমস্যা থাকায় এক্সেল ফাইলে ফেরত দেওয়া হলো।"
-                )
-            except Exception:
-                pass
+            context.user_data["pending_rejection_flow"] = {
+                "stage": 1,
+                "sub_id": sub_id,
+                "rejected_list": s1_rejected,
+                "in_review_list": in_review_emails,
+                "current_idx": 0,
+                "reasons": {}
+            }
+            cur_mail = s1_rejected[0]
+            kb = build_reason_selection_keyboard(1, sub_id, 0, len(s1_rejected))
+            await query.edit_message_caption(
+                caption=(
+                    f"⚠️ **ধাপ ১: রিজেকশন কারণ নির্বাচন (১/{len(s1_rejected)})**\n\n"
+                    f"📧 জিমেইল: `{cur_mail}`\n\n"
+                    f"এই জিমেইলটি কী কারণে রিজেক্ট করতে চান? নিচের একটি কারণ বেছে নিন:"
+                ),
+                reply_markup=kb,
+                parse_mode="Markdown"
+            )
+            return
 
+        await finalize_stage1(context, query, sub_id, in_review_emails, [], user_id)
+
+    # -------------------------------------------------------------
+    # ধাপ ৩ চূড়ান্ত কনফার্মেশন ও রিজেকশন কারণ উইজার্ড
+    # -------------------------------------------------------------
     elif data.startswith("sub_s3_open:"):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
@@ -1576,64 +1600,136 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not sub or sub["status"] != "stage2_review":
             return
 
-        rate = get_config("email_rate", float)
         review_emails = json.loads(sub["in_review_json"])
         selected = admin_stage3_selections.get(sub_id, set(range(len(review_emails))))
 
         final_accepted = [review_emails[i] for i in sorted(list(selected))]
         final_rejected = [review_emails[i] for i in range(len(review_emails)) if i not in selected]
 
-        total_accepted = len(final_accepted)
-        total_rejected = sub["rejected_count"] + len(final_rejected)
-        reward = total_accepted * rate
+        if final_rejected:
+            context.user_data["pending_rejection_flow"] = {
+                "stage": 3,
+                "sub_id": sub_id,
+                "rejected_list": final_rejected,
+                "accepted_list": final_accepted,
+                "current_idx": 0,
+                "reasons": {}
+            }
+            cur_mail = final_rejected[0]
+            kb = build_reason_selection_keyboard(3, sub_id, 0, len(final_rejected))
+            await query.edit_message_caption(
+                caption=(
+                    f"⚠️ **ধাপ ৩: রিজেকশন কারণ নির্বাচন (১/{len(final_rejected)})**\n\n"
+                    f"📧 জিমেইল: `{cur_mail}`\n\n"
+                    f"এই জিমেইলটি কী কারণে রিজেক্ট করতে চান? নিচের একটি কারণ বেছে নিন:"
+                ),
+                reply_markup=kb,
+                parse_mode="Markdown"
+            )
+            return
 
-        db_execute("""
-            UPDATE submissions 
-            SET status='completed', accepted_count=?, rejected_count=?
-            WHERE id=?
-        """, (total_accepted, total_rejected, sub_id))
+        await finalize_stage3(context, query, sub_id, final_accepted, [], user_id)
 
-        if total_accepted > 0:
-            update_balance(sub["user_id"], reward)
+    # -------------------------------------------------------------
+    # রিজেকশন কারণ হ্যান্ডলিং
+    # -------------------------------------------------------------
+    elif data.startswith("sub_rs_set:"):
+        parts = data.split(":")
+        stage_num = int(parts[1])
+        sub_id = int(parts[2])
+        cur_idx = int(parts[3])
+        opt = parts[4]
 
-        admin_stage3_selections.pop(sub_id, None)
+        flow = context.user_data.get("pending_rejection_flow")
+        if not flow or flow["sub_id"] != sub_id:
+            await query.answer("সেশন এক্সপায়ার হয়েছে!")
+            return
 
+        reason_text = "পাসওয়ার্ড ভুল / ইনভ্যালিড ক্রেডেনশিয়াল" if opt == "opt1" else "অ্যাকাউন্ট ডিজেবল্ড অথবা সাসপেন্ডেড"
+        email = flow["rejected_list"][cur_idx]
+        flow["reasons"][email] = reason_text
+
+        next_idx = cur_idx + 1
+        if next_idx < len(flow["rejected_list"]):
+            flow["current_idx"] = next_idx
+            next_mail = flow["rejected_list"][next_idx]
+            kb = build_reason_selection_keyboard(stage_num, sub_id, next_idx, len(flow["rejected_list"]))
+            await query.edit_message_caption(
+                caption=(
+                    f"⚠️ **ধাপ {stage_num}: রিজেকশন কারণ নির্বাচন ({next_idx+1}/{len(flow['rejected_list'])})**\n\n"
+                    f"📧 জিমেইল: `{next_mail}`\n\n"
+                    f"এই জিমেইলটির কারণ বেছে নিন:"
+                ),
+                reply_markup=kb,
+                parse_mode="Markdown"
+            )
+        else:
+            rejected_items = [(em, flow["reasons"].get(em, "Invalid")) for em in flow["rejected_list"]]
+            if stage_num == 1:
+                await finalize_stage1(context, query, sub_id, flow["in_review_list"], rejected_items, user_id)
+            elif stage_num == 3:
+                await finalize_stage3(context, query, sub_id, flow["accepted_list"], rejected_items, user_id)
+            elif stage_num == 99:
+                await finalize_reject_all(context, query, sub_id, rejected_items, user_id)
+            context.user_data.pop("pending_rejection_flow", None)
+
+    elif data.startswith("sub_rs_custom:"):
+        parts = data.split(":")
+        stage_num = int(parts[1])
+        sub_id = int(parts[2])
+        cur_idx = int(parts[3])
+
+        flow = context.user_data.get("pending_rejection_flow")
+        if not flow:
+            return
+
+        cur_mail = flow["rejected_list"][cur_idx]
+        context.user_data["state"] = "waiting_custom_reason_text"
+        context.user_data["custom_reason_info"] = {
+            "stage": stage_num,
+            "sub_id": sub_id,
+            "cur_idx": cur_idx
+        }
         await query.edit_message_caption(
             caption=(
-                f"✅ **সাবমিশন চূড়ান্তভাবে সম্পন্ন ও ক্লোজ হয়েছে! (#{sub_id})**\n\n"
-                f"🔹 চূড়ান্ত ভ্যালিড: {total_accepted} টি\n"
-                f"🔹 মোট বাতিল: {total_rejected} টি\n"
-                f"💰 ব্যালেন্সে যোগ হয়েছে: ৳{reward:.2f} BDT\n"
-                f"🔒 সম্পন্ন করেছেন: **{get_admin_name(user_id)}**"
+                f"✍️ **কাস্টম কারণ লিখুন**\n\n"
+                f"📧 জিমেইল: `{cur_mail}`\n\n"
+                f"এই জিমেইলটি কী কারণে রিজেক্ট করতে চান তা চ্যাটে লিখে পাঠান:\n(বাতিল করতে /cancel পাঠান)"
             ),
             parse_mode="Markdown"
         )
 
-        user_msg = (
-            f"🎉 **অভিনন্দন! আপনার জিমেইল অ্যাকাউন্টের চূড়ান্ত পর্যবেক্ষণ সম্পন্ন হয়েছে!**\n\n"
-            f"🔹 সাবমিশন আইডি: #{sub_id}\n"
-            f"✅ সফলভাবে অ্যাপ্রুভ হয়েছে: {total_accepted} টি\n"
-            f"💰 প্রতিটিতে ৳{rate:.2f} হারে আপনার ব্যালেন্সে যোগ হয়েছে: ৳{reward:.2f} BDT!\n"
+    # -------------------------------------------------------------
+    # পুরো ফাইল বাতিল
+    # -------------------------------------------------------------
+    elif data.startswith("sub_rj_all_prompt:"):
+        parts = data.split(":")
+        stage_num = int(parts[1])
+        sub_id = int(parts[2])
+        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        if not sub:
+            return
+
+        emails = json.loads(sub["emails_json"]) if stage_num == 1 else json.loads(sub["in_review_json"])
+
+        context.user_data["pending_rejection_flow"] = {
+            "stage": 99,
+            "sub_id": sub_id,
+            "rejected_list": emails,
+            "current_idx": 0,
+            "reasons": {}
+        }
+        cur_mail = emails[0]
+        kb = build_reason_selection_keyboard(99, sub_id, 0, len(emails))
+        await query.edit_message_caption(
+            caption=(
+                f"❌ **পুরো ফাইল বাতিল: কারণ নির্বাচন (১/{len(emails)})**\n\n"
+                f"📧 জিমেইল: `{cur_mail}`\n\n"
+                f"কারণ নির্বাচন করুন:"
+            ),
+            reply_markup=kb,
+            parse_mode="Markdown"
         )
-        if final_rejected:
-            user_msg += f"⚠️ পর্যবেক্ষণে {len(final_rejected)}টি নষ্ট হওয়ায় বাতিল করা হয়েছে।"
-
-        try:
-            await context.bot.send_message(chat_id=sub["user_id"], text=user_msg)
-        except Exception:
-            pass
-
-        if final_rejected:
-            bio = create_rejected_excel(final_rejected)
-            bio.name = f"rejected_stage3_{sub_id}.xlsx"
-            try:
-                await context.bot.send_document(
-                    chat_id=sub["user_id"],
-                    document=bio,
-                    caption=f"⚠️ {len(final_rejected)}টি জিমেইল নষ্ট হওয়ায় এক্সেল ফাইলে ফেরত দেওয়া হলো।"
-                )
-            except Exception:
-                pass
 
     elif data.startswith("sub_accept_all_s3:"):
         sub_id = int(data.split(":")[1])
@@ -1641,67 +1737,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not sub or sub["status"] != "stage2_review":
             return
 
-        rate = get_config("email_rate", float)
         review_emails = json.loads(sub["in_review_json"])
-        total_accepted = len(review_emails)
-        reward = total_accepted * rate
+        await finalize_stage3(context, query, sub_id, review_emails, [], user_id)
 
-        db_execute("UPDATE submissions SET status='completed', accepted_count=? WHERE id=?", (total_accepted, sub_id))
-        update_balance(sub["user_id"], reward)
-        admin_stage3_selections.pop(sub_id, None)
-
-        await query.edit_message_caption(caption=f"✅ সবকটি ({total_accepted}টি) জিমেইল সফলভাবে অনুমোদিত! যোগ হয়েছে: ৳{reward:.2f} BDT।")
-        try:
-            await context.bot.send_message(
-                chat_id=sub["user_id"],
-                text=f"🎉 আপনার পর্যবেক্ষণে থাকা সবকটি ({total_accepted}টি) জিমেইল সফলভাবে অনুমোদিত হয়েছে!\n💰 ব্যালেন্সে যোগ হয়েছে ৳{reward:.2f} BDT।"
-            )
-        except Exception:
-            pass
-
-    elif data.startswith("sub_reject_all_s3:"):
-        sub_id = int(data.split(":")[1])
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
-        if not sub or sub["status"] != "stage2_review":
-            return
-
-        review_emails = json.loads(sub["in_review_json"])
-        total_rej = sub["rejected_count"] + len(review_emails)
-        db_execute("UPDATE submissions SET status='rejected', accepted_count=0, rejected_count=? WHERE id=?", (total_rej, sub_id))
-        admin_stage3_selections.pop(sub_id, None)
-
-        await query.edit_message_caption(caption=f"❌ পর্যবেক্ষণে থাকা সবকটি ({len(review_emails)}টি) জিমেইল নষ্ট হওয়ায় বাতিল।")
-
-        bio = create_rejected_excel(review_emails)
-        bio.name = f"rejected_all_stage3_{sub_id}.xlsx"
-        try:
-            await context.bot.send_document(
-                chat_id=sub["user_id"],
-                document=bio,
-                caption="❌ পর্যবেক্ষণে আপনার সবগুলো জিমেইল নষ্ট হওয়ায় এক্সেল ফাইলে ফেরত দেওয়া হলো।"
-            )
-        except Exception:
-            pass
-
-    elif data.startswith("sub_reject_all:"):
-        sub_id = int(data.split(":")[1])
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
-        if not sub:
-            return
-
-        emails = json.loads(sub["emails_json"])
-        db_execute("UPDATE submissions SET status='rejected', accepted_count=0, rejected_count=? WHERE id=?", (len(emails), sub_id))
-
-        await query.edit_message_caption(caption=f"❌ পুরো ফাইল ({len(emails)}টি জিমেইল) বাতিল করা হয়েছে।")
-        bio = create_rejected_excel(emails)
-        bio.name = f"all_rejected_{sub_id}.xlsx"
-        try:
-            await context.bot.send_document(chat_id=sub["user_id"], document=bio, caption="❌ আপনার ফাইলের সবগুলো জিমেইল বাতিল করে এক্সেল ফাইলে ফেরত দেওয়া হলো।")
-        except Exception:
-            pass
-
-    # Withdrawals
+    # Withdrawals (শুধুমাত্র ওনারের জন্য অনুমোদন/বাতিল)
     elif data.startswith("approve_withdraw:"):
+        if user_id != get_owner_id():
+            await query.answer("❌ শুধুমাত্র বটের মূল মালিক (Owner) উইথড্র অনুমোদন করতে পারেন!", show_alert=True)
+            return
+
         w_id = int(data.split(":")[1])
         w = db_execute("SELECT * FROM withdrawals WHERE id=?", (w_id,), fetchone=True)
         if not w or w["status"] != "pending":
@@ -1727,6 +1771,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     elif data.startswith("reject_withdraw:"):
+        if user_id != get_owner_id():
+            await query.answer("❌ শুধুমাত্র বটের মূল মালিক (Owner) উইথড্র বাতিল করতে পারেন!", show_alert=True)
+            return
+
         w_id = int(data.split(":")[1])
         w = db_execute("SELECT * FROM withdrawals WHERE id=?", (w_id,), fetchone=True)
         if not w or w["status"] != "pending":
@@ -1737,6 +1785,173 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=w["user_id"], text=f"❌ উইথড্রয়াল রিকোয়েস্ট (৳{w['amount']:.2f}) বাতিল করা হয়েছে।")
         except Exception:
             pass
+
+
+# =========================================================
+# FINALIZATION LOGICS (STAGE 1, 3 & REJECT ALL)
+# =========================================================
+
+async def finalize_stage1(context, query, sub_id, in_review_emails, rejected_items, admin_user_id):
+    sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+    rate = get_config("email_rate", float)
+    db_execute("""
+        UPDATE submissions 
+        SET status='stage2_review', in_review_json=?, rejected_count=?
+        WHERE id=?
+    """, (json.dumps(in_review_emails), len(rejected_items), sub_id))
+
+    admin_stage1_selections.pop(sub_id, None)
+
+    h_by = sub["handled_by"] or get_admin_name(admin_user_id)
+    next_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🔍 ধাপ ৩: চূড়ান্ত অনুমোদন দিন ({len(in_review_emails)}টি)", callback_data=f"sub_s3_open:{sub_id}")],
+        [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")]
+    ])
+
+    await query.edit_message_caption(
+        caption=(
+            f"⏳ **ধাপ ১ সম্পন্ন - ধাপ ২ (২৪-৪৮ ঘণ্টা পর্যবেক্ষণ চলছে)** (#{sub_id})\n\n"
+            f"👤 ইউজার: {sub['user_id']}\n"
+            f"🔒 রিসিভ করেছিলেন: **{h_by}**\n"
+            f"🔹 পর্যালোচনায় নেওয়া হয়েছে: {len(in_review_emails)} টি\n"
+            f"🔹 সমস্যা থাকায় বাতিল: {len(rejected_items)} টি\n\n"
+            f"২৪ থেকে ৪৮ ঘণ্টা পর নিচের বাটনে চাপ দিয়ে চূড়ান্ত যাচাই করুন।"
+        ),
+        reply_markup=next_kb,
+        parse_mode="Markdown"
+    )
+
+    user_msg = (
+        f"📋 **আপনার জিমেইল সাবমিশনের ১ম ধাপের ফলাফল!** (#{sub_id})\n\n"
+        f"🔹 পর্যালোচনায় রাখা হয়েছে: {len(in_review_emails)} টি\n"
+        f"❌ সমস্যা থাকায় বাতিল: {len(rejected_items)} টি\n\n"
+        f"📌 **জরুরি তথ্য:** পর্যালোচনায় থাকা {len(in_review_emails)}টি জিমেইল আগামী **২৪ থেকে ৪৮ ঘণ্টা** পর্যবেক্ষণে থাকবে। "
+        f"পর্যবেক্ষণ শেষে যে জিমেইলগুলো ঠিক থাকবে, প্রতিটির জন্য ৳{rate:.2f} টাকা আপনার ব্যালেন্সে যোগ হবে।"
+    )
+    if rejected_items:
+        user_msg += "\n\n⚠️ **বাতিলকৃত জিমেইল ও সুনির্দিষ্ট কারণ:**\n"
+        for i, (em, r_text) in enumerate(rejected_items, 1):
+            user_msg += f"{i}. `{em}` ➔ {r_text}\n"
+
+    try:
+        await context.bot.send_message(chat_id=sub["user_id"], text=user_msg, parse_mode="Markdown")
+    except Exception:
+        pass
+
+    if rejected_items:
+        bio = create_rejected_excel(rejected_items)
+        bio.name = f"rejected_stage1_{sub_id}.xlsx"
+        try:
+            await context.bot.send_document(
+                chat_id=sub["user_id"],
+                document=bio,
+                caption=f"⚠️ {len(rejected_items)}টি জিমেইলে সমস্যা থাকায় কারণসহ এক্সেল ফাইলে ফেরত দেওয়া হলো।"
+            )
+        except Exception:
+            pass
+
+
+async def finalize_stage3(context, query, sub_id, accepted_emails, rejected_items, admin_user_id):
+    sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+    rate = get_config("email_rate", float)
+    total_acc = len(accepted_emails)
+    total_rej = sub["rejected_count"] + len(rejected_items)
+    reward = total_acc * rate
+
+    db_execute("""
+        UPDATE submissions 
+        SET status='completed', accepted_count=?, rejected_count=?
+        WHERE id=?
+    """, (total_acc, total_rej, sub_id))
+
+    if total_acc > 0:
+        update_balance(sub["user_id"], reward)
+
+    admin_stage3_selections.pop(sub_id, None)
+    approver = get_admin_name(admin_user_id)
+
+    team_msg = (
+        f"🎉 **টিম অ্যালার্ট: ফাইল চূড়ান্ত সম্পন্ন হয়েছে! (#Submission_{sub_id})**\n\n"
+        f"👤 সম্পন্নকারী: **{approver}**\n"
+        f"🆔 ইউজার: `{sub['user_id']}`\n"
+        f"✅ অনুমোদিত: {total_acc} টি\n"
+        f"❌ মোট বাতিল: {total_rej} টি\n"
+        f"💰 ব্যালেন্সে যোগ হয়েছে: ৳{reward:.2f} BDT"
+    )
+    await notify_all_admins(context, team_msg, exclude_user_id=admin_user_id)
+
+    await query.edit_message_caption(
+        caption=(
+            f"✅ **সাবমিশন চূড়ান্তভাবে সম্পন্ন ও ক্লোজ হয়েছে! (#{sub_id})**\n\n"
+            f"🔹 চূড়ান্ত ভ্যালিড: {total_acc} টি\n"
+            f"🔹 মোট বাতিল: {total_rej} টি\n"
+            f"💰 ব্যালেন্সে যোগ হয়েছে: ৳{reward:.2f} BDT\n"
+            f"🔒 সম্পন্ন করেছেন: **{approver}**"
+        ),
+        parse_mode="Markdown"
+    )
+
+    user_msg = (
+        f"🎉 **অভিনন্দন! আপনার জিমেইল অ্যাকাউন্টের চূড়ান্ত পর্যবেক্ষণ সম্পন্ন হয়েছে!**\n\n"
+        f"🔹 সাবমিশন আইডি: #{sub_id}\n"
+        f"✅ সফলভাবে অনুমোদিত: {total_acc} টি\n"
+        f"💰 প্রতিটিতে ৳{rate:.2f} হারে আপনার ব্যালেন্সে যোগ হয়েছে: ৳{reward:.2f} BDT!\n"
+    )
+    if rejected_items:
+        user_msg += f"\n⚠️ পর্যবেক্ষণে {len(rejected_items)}টি নষ্ট হওয়ায় বাতিল করা হয়েছে:\n"
+        for i, (em, r_text) in enumerate(rejected_items, 1):
+            user_msg += f"{i}. `{em}` ➔ {r_text}\n"
+
+    try:
+        await context.bot.send_message(chat_id=sub["user_id"], text=user_msg, parse_mode="Markdown")
+    except Exception:
+        pass
+
+    if rejected_items:
+        bio = create_rejected_excel(rejected_items)
+        bio.name = f"rejected_stage3_{sub_id}.xlsx"
+        try:
+            await context.bot.send_document(
+                chat_id=sub["user_id"],
+                document=bio,
+                caption=f"⚠️ {len(rejected_items)}টি জিমেইল নষ্ট হওয়ায় কারণসহ এক্সেল ফাইলে ফেরত দেওয়া হলো।"
+            )
+        except Exception:
+            pass
+
+
+async def finalize_reject_all(context, query, sub_id, rejected_items, admin_user_id):
+    sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+    admin_name = get_admin_name(admin_user_id)
+    total_rej = len(rejected_items)
+
+    db_execute("UPDATE submissions SET status='rejected', accepted_count=0, rejected_count=? WHERE id=?", (total_rej, sub_id))
+
+    team_msg = (
+        f"❌ **টিম অ্যালার্ট: ফাইল বাতিল করা হয়েছে! (#Submission_{sub_id})**\n\n"
+        f"👤 বাতিলকারী: **{admin_name}**\n"
+        f"🆔 ইউজার: `{sub['user_id']}`\n"
+        f"❌ বাতিল জিমেইল: {total_rej} টি"
+    )
+    await notify_all_admins(context, team_msg, exclude_user_id=admin_user_id)
+
+    await query.edit_message_caption(caption=f"❌ পুরো ফাইল ({total_rej}টি জিমেইল) কারণসহ বাতিল করা হয়েছে।")
+
+    user_msg = f"❌ **আপনার সাবমিশন (#{sub_id}) বাতিল করা হয়েছে!**\n\nবাতিলকৃত জিমেইল ও সুনির্দিষ্ট কারণ:\n"
+    for i, (em, r_text) in enumerate(rejected_items, 1):
+        user_msg += f"{i}. `{em}` ➔ {r_text}\n"
+
+    try:
+        await context.bot.send_message(chat_id=sub["user_id"], text=user_msg, parse_mode="Markdown")
+    except Exception:
+        pass
+
+    bio = create_rejected_excel(rejected_items)
+    bio.name = f"all_rejected_{sub_id}.xlsx"
+    try:
+        await context.bot.send_document(chat_id=sub["user_id"], document=bio, caption="❌ আপনার ফাইলের সবগুলো জিমেইল কারণসহ এক্সেল ফাইলে ফেরত দেওয়া হলো।")
+    except Exception:
+        pass
 
 
 # =========================================================
@@ -1773,7 +1988,49 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
-    # ১. ডায়নামিক কনফিগ ভ্যালু সেভ করা
+    # ১. কাস্টম রিজেকশন কারণ টাইপ করে সেভ করা
+    if is_admin(user.id) and state == "waiting_custom_reason_text":
+        info = context.user_data.get("custom_reason_info")
+        flow = context.user_data.get("pending_rejection_flow")
+        if info and flow:
+            cur_idx = info["cur_idx"]
+            stage_num = info["stage"]
+            sub_id = info["sub_id"]
+            email = flow["rejected_list"][cur_idx]
+            flow["reasons"][email] = text
+
+            context.user_data["state"] = None
+            next_idx = cur_idx + 1
+
+            if next_idx < len(flow["rejected_list"]):
+                flow["current_idx"] = next_idx
+                next_mail = flow["rejected_list"][next_idx]
+                kb = build_reason_selection_keyboard(stage_num, sub_id, next_idx, len(flow["rejected_list"]))
+                await update.message.reply_text(
+                    f"✅ কারণ সেভ হয়েছে!\n\n"
+                    f"⚠️ **পরবর্তী জিমেইল ({next_idx+1}/{len(flow['rejected_list'])})**\n"
+                    f"📧 জিমেইল: `{next_mail}`\n\n"
+                    f"কারণ নির্বাচন করুন:",
+                    reply_markup=kb,
+                    parse_mode="Markdown"
+                )
+            else:
+                rejected_items = [(em, flow["reasons"].get(em, "Invalid")) for em in flow["rejected_list"]]
+                class DummyQuery:
+                    async def edit_message_caption(self, caption, reply_markup=None, parse_mode=None):
+                        await update.message.reply_text(caption, reply_markup=reply_markup, parse_mode=parse_mode)
+                dq = DummyQuery()
+
+                if stage_num == 1:
+                    await finalize_stage1(context, dq, sub_id, flow["in_review_list"], rejected_items, user.id)
+                elif stage_num == 3:
+                    await finalize_stage3(context, dq, sub_id, flow["accepted_list"], rejected_items, user.id)
+                elif stage_num == 99:
+                    await finalize_reject_all(context, dq, sub_id, rejected_items, user.id)
+                context.user_data.pop("pending_rejection_flow", None)
+        return
+
+    # ২. ডায়নামিক কনফিগ ভ্যালু সেভ করা
     if is_admin(user.id) and state == "waiting_cfg_val":
         cfg_key = context.user_data.get("editing_cfg_key")
         try:
@@ -1788,7 +2045,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ সঠিক সংখ্যায় মান লিখে পাঠান।")
         return
 
-    # ২. ডায়নামিক বাটন উইজার্ড ইনপুট (Multi-message & Big Keyboard)
+    # ৩. ডায়নামিক বাটন উইজার্ড
     if is_admin(user.id) and state == "dyn_waiting_title":
         context.user_data["dyn_title"] = text
         context.user_data["state"] = "dyn_waiting_content"
@@ -1818,7 +2075,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🎉 **বাটন সফলভাবে তৈরি হয়েছে!**\n\nনাম: {title}\nধরন: {b_type.upper()}\n(এটি নিচের বড় কীবোর্ডে স্বয়ংক্রিয়ভাবে যুক্ত হয়েছে)", reply_markup=get_bottom_keyboard())
         return
 
-    # ৩. বড় কীবোর্ডের ডায়নামিক বাটন ক্লিক হ্যান্ডলিং
+    # ৪. বড় কীবোর্ডের ডায়নামিক বাটন ক্লিক হ্যান্ডলিং
     dyn_btn_row = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=0 AND title=?", (text,), fetchone=True)
     if dyn_btn_row:
         if dyn_btn_row["btn_type"] == "url":
@@ -1836,14 +2093,44 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"📂 **{dyn_btn_row['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
         return
 
-    # ৪. সাপোর্ট বাটন
+    # ৫. ব্রডকাস্ট পোস্ট হ্যান্ডলিং (ইউজারদের ইনবক্স + নির্ধারিত অফিশিয়াল গ্রুপে)
+    if is_admin(user.id) and state == "admin_broadcast":
+        users = db_execute("SELECT user_id FROM users", fetchall=True)
+        user_count = 0
+        for u in users:
+            try:
+                await context.bot.send_message(chat_id=u["user_id"], text=text, parse_mode="Markdown")
+                user_count += 1
+            except Exception:
+                pass
+
+        # অফিসিয়াল গ্রুপে স্বয়ংক্রিয় পোস্ট (পেমেন্ট প্রুফ চ্যানেল বাদ দিয়ে)
+        group_posted = False
+        try:
+            await context.bot.send_message(chat_id=FORCE_GROUP_CHAT_ID, text=text, parse_mode="Markdown")
+            group_posted = True
+        except Exception as e:
+            print(f"Failed to post broadcast to official group: {e}")
+
+        context.user_data.clear()
+        
+        report_msg = (
+            f"📢 **ব্রডকাস্ট সম্পন্ন হয়েছে!**\n\n"
+            f"👤 ইউজার ইনবক্সে পৌঁছেছে: {user_count}/{len(users)} জনের কাছে\n"
+            f"👥 অফিসিয়াল গ্রুপে পোস্ট: {'✅ সফল' if group_posted else '❌ ব্যর্থ'}\n"
+            f"📢 পেমেন্ট প্রুফ চ্যানেল: 🚫 বাদ রাখা হয়েছে (নিয়মানুযায়ী পোস্ট হয়নি)"
+        )
+        await update.message.reply_text(report_msg, parse_mode="Markdown")
+        return
+
+    # ৬. সাপোর্ট বাটন
     if text == btn_sup:
         sup_text = get_custom_msg("support")
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💬 সরাসরি মেসেজ পাঠান / Support", url=SUPPORT_URL)]])
         await update.message.reply_text(sup_text, reply_markup=keyboard)
         return
 
-    # ৫. ফোর্স জয়েন যাচাই
+    # ৭. ফোর্স জয়েন যাচাই
     if not is_admin(user.id):
         joined = await is_user_joined_all(context.bot, user.id)
         if not joined:
@@ -1969,19 +2256,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(rules)
         return
 
-    if is_admin(user.id) and state == "admin_broadcast":
-        users = db_execute("SELECT user_id FROM users", fetchall=True)
-        count = 0
-        for u in users:
-            try:
-                await context.bot.send_message(chat_id=u["user_id"], text=text)
-                count += 1
-            except Exception:
-                pass
-        context.user_data.clear()
-        await update.message.reply_text(f"📢 ব্রডকাস্ট সম্পন্ন: {count}/{len(users)}")
-        return
-
     if is_admin(user.id) and state == "admin_single_user":
         try:
             context.user_data["target_user"] = int(text)
@@ -2064,24 +2338,32 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: {text}\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)")
 
-        owner, helpers = get_all_admins()
-        all_admin_ids = [owner] + [h["user_id"] for h in helpers] if owner else [h["user_id"] for h in helpers]
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Approve", callback_data=f"approve_withdraw:{w_id}"),
-             InlineKeyboardButton("❌ Reject", callback_data=f"reject_withdraw:{w_id}")]
-        ])
-        for a_id in all_admin_ids:
+        # শুধুমাত্র মূল ওনারের (Owner) কাছে উইথড্র রিকোয়েস্ট পাঠানো
+        owner_id = get_owner_id()
+        if owner_id:
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Approve", callback_data=f"approve_withdraw:{w_id}"),
+                 InlineKeyboardButton("❌ Reject", callback_data=f"reject_withdraw:{w_id}")]
+            ])
             try:
                 await context.bot.send_message(
-                    chat_id=a_id,
-                    text=f"🔔 নতুন উইথড্র রিকোয়েস্ট (#{w_id})\nইউজার: {user.id}\nটাকা: ৳{rec:.2f} (${rec_usdt:.2f})\nমেথড: {method}\nঅ্যাকাউন্ট: {text}",
-                    reply_markup=keyboard
+                    chat_id=owner_id,
+                    text=(
+                        f"🔔 **নতুন উইথড্র রিকোয়েস্ট (Owner Only)** (#{w_id})\n\n"
+                        f"👤 ইউজার: `{user.id}`\n"
+                        f"💰 তোলার পরিমাণ: ৳{amt:.2f} BDT\n"
+                        f"💸 পেমেন্ট দিতে হবে: ৳{rec:.2f} (${rec_usdt:.2f})\n"
+                        f"💳 মেথড: {method}\n"
+                        f"📌 অ্যাকাউন্ট/UID: `{text}`"
+                    ),
+                    reply_markup=keyboard,
+                    parse_mode="Markdown"
                 )
             except Exception:
                 pass
         return
 
+    # ফাইল রিসিভ ও ডাটাবেজে মেসেজ ট্র্যাকিং (রিমুভ করার জন্য)
     if state == "waiting_file":
         doc = update.message.document
         if not doc:
@@ -2156,12 +2438,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mail_preview = "\n".join([f"{i+1}. {m}" for i, m in enumerate(valid_emails)])
         admin_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক বাছাই ও রিসিভ", callback_data=f"sub_s1_open:{sub_id}")],
-            [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_reject_all:{sub_id}")]
+            [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:1:{sub_id}")]
         ])
 
         for a_id in all_admin_ids:
             try:
-                await context.bot.send_document(
+                sent_msg = await context.bot.send_document(
                     chat_id=a_id,
                     document=doc.file_id,
                     caption=(
@@ -2171,6 +2453,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"📋 তালিকা:\n{mail_preview}"
                     ),
                     reply_markup=admin_kb
+                )
+                db_execute(
+                    "INSERT INTO submission_admin_messages (sub_id, admin_id, message_id) VALUES (?, ?, ?)",
+                    (sub_id, a_id, sent_msg.message_id)
                 )
             except Exception:
                 pass
