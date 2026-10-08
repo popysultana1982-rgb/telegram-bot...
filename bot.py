@@ -50,13 +50,15 @@ DB_NAME = "bot.db"
 PORT = int(os.environ.get("PORT", 10000))
 
 # =========================================================
-# CHAT IDS & LINKS
+# CHAT IDS, LINKS & SUPPORT
 # =========================================================
 FORCE_GROUP_CHAT_ID = -1004471047712
 FORCE_GROUP_LINK = "https://t.me/+rVP6CkmqrnFlNzA1"
 
 FORCE_CHANNEL_CHAT_ID = -1003991468184
 FORCE_CHANNEL_LINK = "https://t.me/fast_payment_proof_chanel"
+
+SUPPORT_URL = "https://t.me/Talha_juba098"
 
 
 # =========================================================
@@ -111,6 +113,7 @@ def init_db():
             files_today INTEGER DEFAULT 0,
             last_file_date TEXT,
             referred_by INTEGER DEFAULT NULL,
+            seen_rules INTEGER DEFAULT 0,
             created_at TEXT
         )
     """)
@@ -276,27 +279,32 @@ DEFAULT_MESSAGES = {
         "আসসালামু আলাইকুম, {name}! 🌸\n\n"
         "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
         "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করে নিরাপদভাবে টাকা ইনকাম করতে পারবেন।\n\n"
-        "📌 **৩টি ধাপে সাবমিশন যাচাই পদ্ধতি:**\n"
-        "🔹 ধাপ ১: ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক রিসিভ করবেন এবং যে জিমেইলগুলো লগইন করা যায় সেগুলো পর্যালোচনায় রাখবেন। যেগুলোতে লগইন সমস্যা থাকবে সেগুলো ১ম ধাপেই বাতিল ও এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
-        "🔹 ধাপ ২: পর্যালোচনায় রাখা জিমেইলগুলো পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে। এই সময়ে ব্যালেন্স যোগ হবে না।\n"
-        "🔹 ধাপ ৩: ২৪ থেকে ৪৮ ঘণ্টা পর যে জিমেইলগুলো ঠিক থাকবে, সেগুলোর প্রতিটির জন্য ৳{rate} টাকা আপনার ব্যালেন্সে যোগ হয়ে যাবে! 💰\n"
-        "🔹 আর শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n\n"
-        "⚠️ প্রতিদিন সর্বোচ্চ ৫টি ফাইল এবং প্রতি ফাইলে সর্বোচ্চ ৫টি ভ্যালিড Gmail দিতে পারবেন। একবার সাবমিট করা জিমেইল আগামী ৩ দিনের মধ্যে পুনরায় দেওয়া যাবে না।\n\n"
-        "👇 **বটের কার্যক্রম শুরু করতে নিচের চ্যানেল ও গ্রুপে জয়েন হয়ে ভেরিফাই বাটনে ক্লিক করুন:**"
+        "📜 **আমাদের জিমেইল সাবমিশন ও কাজের নিয়মাবলী:**\n"
+        "১. ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই করবেন এবং লগইন করা যায় এমন মেইলগুলো পর্যালোচনায় রাখবেন।\n"
+        "২. প্রাথমিক বাছায়ে যেসব জিমেইলে লগইন সমস্যা থাকবে, সেগুলো সাথে সাথে বাতিল করে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
+        "৩. পর্যালোচনায় রাখা জিমেইলগুলো পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে।\n"
+        "৪. ২৪ থেকে ৪৮ ঘণ্টার পর্যবেক্ষণ সময়ে ব্যালেন্স যোগ হবে না।\n"
+        "৫. পর্যবেক্ষণ শেষে যেসব জিমেইল অক্ষত থাকবে, প্রতিটির জন্য ৳{rate} টাকা ব্যালেন্সে যোগ হবে! 💰\n"
+        "৬. শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
+        "৭. প্রতিদিন সর্বোচ্চ ৫টি ফাইল এবং প্রতি ফাইলে সর্বোচ্চ ৫টি ভ্যালিড Gmail দিতে পারবেন।\n"
+        "৮. একবার জমা দেওয়া জিমেইল আগামী ৩ দিনের মধ্যে পুনরায় সাবমিট করা যাবে না।"
     ),
     "rules": (
-        "📜 **আমাদের জিমেইল সাবমিশন নিয়মাবলী:**\n\n"
-        "🔹 ধাপ ১: ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই করবেন।\n"
-        "🔹 ধাপ ২: পর্যালোচনায় থাকা জিমেইলগুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণে থাকবে।\n"
-        "🔹 ধাপ ৩: অক্ষত প্রতি জিমেইলে ৳{rate} টাকা পাবেন এবং নষ্ট জিমেইল এক্সেল ফাইলে ফেরত যাবে।\n"
-        "⚠️ এক ফাইলে সর্বোচ্চ ৫টি @gmail.com এবং দিনে সর্বোচ্চ ৫টি ফাইল সাবমিট করা যাবে।"
+        "📜 **আমাদের কাজের নিয়মাবলী ও শর্তাবলী:**\n\n"
+        "১. ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই সম্পন্ন করবেন।\n"
+        "২. লগইন সমস্যা থাকা জিমেইল ১ম ধাপেই বাতিল ও এক্সেল ফাইলে ফেরত যাবে।\n"
+        "৩. নির্বাচিত জিমেইলগুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণে থাকবে।\n"
+        "৪. পর্যবেক্ষণ শেষে সঠিক প্রতি জিমেইলে ৳{rate} টাকা ব্যালেন্সে যোগ হবে।\n"
+        "৫. শেষ ধাপে নষ্ট হওয়া মেইলগুলো এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
+        "৬. এক ফাইলে সর্বোচ্চ ৫টি @gmail.com এবং দিনে সর্বোচ্চ ৫টি ফাইল দেওয়া যাবে।\n"
+        "৭. বিগত ৩ দিনের মধ্যে জমা দেওয়া জিমেইল পুনরায় গ্রহণযোগ্য নয়।"
     ),
     "sell": (
         "📤 আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।\n\n"
         "💰 প্রতি ভ্যালিড জিমেইল রেট: ৳{rate} BDT\n"
         "⚠️ এক ফাইলে সর্বোচ্চ ৫টি @gmail.com থাকতে হবে। বিগত ৩ দিনের মধ্যে জমা দেওয়া কোনো মেইল গ্রহণ করা হবে না।"
     ),
-    "support": "যে কোনো সমস্যা বা সহযোগিতার জন্য সরাসরি সাপোর্টে যোগাযোগ করুন:",
+    "support": "যেকোনো সমস্যা, প্রশ্ন বা সহায়তার জন্য নিচে থাকা বাটনে ক্লিক করে সাপোর্টে মেসেজ পাঠান:",
     "maintenance": (
         "⚠️ **বট আপডেটের কাজ চলছে!** 🛠\n\n"
         "সম্মানিত ইউজার, আমাদের সিস্টেমে জরুরি আপডেটের কাজ চলছে। "
@@ -387,8 +395,8 @@ def add_user(user, referrer_id=None):
     existing = db_execute("SELECT * FROM users WHERE user_id=?", (user.id,), fetchone=True)
     if not existing:
         db_execute("""
-            INSERT INTO users (user_id, username, balance, files_today, last_file_date, referred_by, created_at)
-            VALUES (?, ?, 0, 0, ?, ?, ?)
+            INSERT INTO users (user_id, username, balance, files_today, last_file_date, referred_by, seen_rules, created_at)
+            VALUES (?, ?, 0, 0, ?, ?, 0, ?)
         """, (user.id, user.username or "", datetime.now().strftime("%Y-%m-%d"), referrer_id, datetime.now().isoformat()))
         return True
     else:
@@ -398,6 +406,10 @@ def add_user(user, referrer_id=None):
 
 def get_user(user_id):
     return db_execute("SELECT * FROM users WHERE user_id=?", (user_id,), fetchone=True)
+
+
+def mark_rules_seen(user_id):
+    db_execute("UPDATE users SET seen_rules=1 WHERE user_id=?", (user_id,))
 
 
 def get_balance(user_id):
@@ -455,7 +467,18 @@ async def is_user_joined_all(bot, user_id):
     return True
 
 
-def get_force_join_markup():
+def get_first_time_markup():
+    """প্রথমবার আসার সময় রুলস মেসেজের নিচে ৩টি বাটন ও সাপোর্ট বাটন"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 ১. পেমেন্ট প্রুফ চ্যানেল", url=FORCE_CHANNEL_LINK)],
+        [InlineKeyboardButton("👥 ২. অফিসিয়াল গ্রুপ", url=FORCE_GROUP_LINK)],
+        [InlineKeyboardButton("✅ ৩. ভেরিফাই করুন (Verify)", callback_data="check_joined")],
+        [InlineKeyboardButton("💬 সরাসরি মেসেজ পাঠান / Support", url=SUPPORT_URL)]
+    ])
+
+
+def get_rejoin_markup():
+    """বের হয়ে যাওয়ার পর শুধুমাত্র ৩টি বাটন সংবলিত কীবোর্ড"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 ১. পেমেন্ট প্রুফ চ্যানেল", url=FORCE_CHANNEL_LINK)],
         [InlineKeyboardButton("👥 ২. অফিসিয়াল গ্রুপ", url=FORCE_GROUP_LINK)],
@@ -545,7 +568,7 @@ async def show_main_menu(update, context):
     user = update.effective_user
     add_user(user)
 
-    msg_text = "🎉 **ধন্যবাদ! আপনি সফলভাবে যুক্ত আছেন।**\n\nনিচের বাটনগুলো চেপে আপনার কাঙ্ক্ষিত অপশন বেছে নিন:"
+    msg_text = "🎉 **আপনি আমাদের সাথে সফলভাবে যুক্ত আছেন।**\n\nনিচের বাটনগুলো চেপে আপনার অপশন বেছে নিন:"
 
     buttons = db_execute("SELECT * FROM buttons ORDER BY id DESC", fetchall=True)
     inline_kb = None
@@ -599,18 +622,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+    u_data = get_user(user.id)
+    seen_rules = u_data["seen_rules"] if u_data else 0
+
     joined = await is_user_joined_all(context.bot, user.id)
+
+    # কেস ১: ইউজার গ্রুপ ও চ্যানেলে জয়েন আছে
     if joined:
         await show_main_menu(update, context)
         return
 
-    name = user.first_name or "User"
-    welcome_text = get_custom_msg("welcome").replace("{name}", name)
+    # কেস ২: ইউজার একদম নতুন (আগে রুলস দেখেনি) -> বিস্তারিত ওয়েলকাম + রুলস মেসেজ
+    if not seen_rules:
+        name = user.first_name or "User"
+        welcome_text = get_custom_msg("welcome").replace("{name}", name)
 
+        await update.message.reply_text(
+            f"{welcome_text}\n\n👇 **বট চালু করতে নিচের চ্যানেল ও গ্রুপে যুক্ত হয়ে ভেরিফাই চাপুন:**",
+            reply_markup=get_first_time_markup(),
+            parse_mode="Markdown"
+        )
+        return
+
+    # কেস ৩: ইউজার পুরনো কিন্তু গ্রুপ থেকে বের হয়ে গেছে -> কোনো বড় মেসেজ ছাড়াই ৩টি বাটন
     await update.message.reply_text(
-        welcome_text,
-        reply_markup=get_force_join_markup(),
-        parse_mode="Markdown"
+        "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:",
+        reply_markup=get_rejoin_markup()
     )
 
 
@@ -781,7 +818,7 @@ async def reset_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# ADMIN CONTROL PANEL (OWNER EXCLUSIVE BUTTON INCLUDED)
+# ADMIN CONTROL PANEL
 # =========================================================
 
 async def show_admin_panel(query, user_id):
@@ -803,7 +840,7 @@ async def show_admin_panel(query, user_id):
         [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")]
     ]
 
-    # শুধুমাত্র মূল মালিকের (Owner) জন্য স্পেশাল এক্সট্রা বাটন
+    # শুধুমাত্র মূল মালিকের প্যানেলে নাম এডিট ও ম্যানেজমেন্ট বাটন থাকবে
     if is_owner:
         keyboard.append([InlineKeyboardButton("👥 অ্যাডমিন তালিকা ও নাম এডিট (Owner Only)", callback_data="owner_manage_admins")])
 
@@ -851,17 +888,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
-    # ভেরিফাই বাটন
+    # ভেরিফাই বাটন হ্যান্ডলিং
     if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         if joined:
+            mark_rules_seen(user_id)
             await query.message.delete()
             await show_main_menu(update, context)
         else:
-            await query.answer("❌ আপনি এখনো জয়েন করেননি! দুটি গ্রুপ ও চ্যানেলে জয়েন হয়ে আবার ভেরিফাই চাপুন।", show_alert=True)
+            await query.answer("❌ আপনি এখনো জয়েন করেননি! চ্যানেল ও গ্রুপে জয়েন হয়ে আবার ভেরিফাই চাপুন।", show_alert=True)
         return
 
-    # অ্যাডমিন পারমিশন চেক
+    # অ্যাডমিন এক্সেস চেক
     if not is_admin(user_id):
         return
 
@@ -878,7 +916,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_admin_panel(query, user_id)
 
     # -------------------------------------------------------------
-    # ওনার স্পেশাল: অ্যাডমিন ম্যানেজমেন্ট ও নাম এডিট
+    # ওনার কর্তৃক অ্যাডমিন ম্যানেজমেন্ট
     # -------------------------------------------------------------
     elif data == "owner_manage_admins":
         if user_id != get_owner_id():
@@ -1033,7 +1071,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # -------------------------------------------------------------
-    # ফাইল হিস্ট্রি ও ডিলিট
+    # অ্যাডমিন ফাইল হিস্ট্রি ও ডিলিট
     # -------------------------------------------------------------
     elif data.startswith("admin_file_history:"):
         page = int(data.split(":")[1])
@@ -1216,18 +1254,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("ফাইলটি অলরেডি প্রসেস করা হয়েছে!", show_alert=True)
             return
 
-        # যিনি রিসিভ করলেন তার নাম নেওয়া
         rec_name = get_admin_name(user_id)
 
-        # চেক করা অন্য কেউ অলরেডি হাত দিয়েছে কি না
         if sub["handled_by"] and sub["handled_by"] != rec_name:
             await query.answer(f"⚠️ এই ফাইলটি অলরেডি {sub['handled_by']} রিসিভ করেছেন!", show_alert=True)
             return
 
-        # ডাটাবেজে রেকর্ড করা যে ইনি রিসিভ করলেন
         db_execute("UPDATE submissions SET handled_by=? WHERE id=?", (rec_name, sub_id))
 
-        # অন্য সকল অ্যাডমিনকে সাথে সাথে জানিয়ে দেওয়া
         owner, helpers = get_all_admins()
         all_admin_ids = [owner] + [h["user_id"] for h in helpers] if owner else [h["user_id"] for h in helpers]
 
@@ -1588,26 +1622,24 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
-    # ১. সাপোর্ট বাটন
+    # ১. সাপোর্ট বাটন সবসময় সবার জন্য উন্মুক্ত
     if text == btn_sup:
         sup_text = get_custom_msg("support")
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💬 মেসেজ পাঠান", url="https://t.me/Talha_juba098")]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💬 সরাসরি মেসেজ পাঠান / Support", url=SUPPORT_URL)]])
         await update.message.reply_text(sup_text, reply_markup=keyboard)
         return
 
-    # ২. অন্যান্য বাটনের ক্ষেত্রে ফোর্স জয়েন যাচাই
+    # ২. অন্যান্য বাটনের ক্ষেত্রে ফোর্স জয়েন যাচাই (বের হয়ে গেলে সরাসরি ৩টি বাটন আসবে)
     if not is_admin(user.id):
         joined = await is_user_joined_all(context.bot, user.id)
         if not joined:
             await update.message.reply_text(
-                "⚠️ **দুঃখিত!** বটের সুবিধাসমূহ ব্যবহার করতে হলে আপনাকে আমাদের গ্রুপ ও চ্যানেলে জয়েন থাকতে হবে।\n\n"
-                "নিচের লিংকে ক্লিক করে যুক্ত হয়ে 'ভেরিফাই করুন' চাপুন:",
-                reply_markup=get_force_join_markup(),
-                parse_mode="Markdown"
+                "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:",
+                reply_markup=get_rejoin_markup()
             )
             return
 
-    # ওনার কর্তৃক সহযোগী অ্যাডমিনের নাম পরিবর্তনের টেক্সট ইনপুট
+    # ওনার কর্তৃক সহযোগী অ্যাডমিনের নাম এডিট
     if user.id == get_owner_id() and state == "waiting_helper_new_name":
         target_id = context.user_data.get("target_helper_id")
         if text:
@@ -1844,7 +1876,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Approve", callback_data=f"approve_withdraw:{w_id}"),
-                 InlineKeyboardButton("❌ Reject", callback_data=f"reject_withdraw:{w_id}")]
+             InlineKeyboardButton("❌ Reject", callback_data=f"reject_withdraw:{w_id}")]
         ])
         for a_id in all_admin_ids:
             try:
