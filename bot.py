@@ -119,11 +119,14 @@ def init_db():
         )
     """)
 
+    # ডায়নামিক বাটন এবং সাব-বাটন টেবিল (Parent-Child Hierarchy)
     db_execute("""
-        CREATE TABLE IF NOT EXISTS buttons (
+        CREATE TABLE IF NOT EXISTS dynamic_buttons (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_id INTEGER DEFAULT 0,
             title TEXT NOT NULL,
-            url TEXT NOT NULL
+            btn_type TEXT NOT NULL, -- 'url' or 'message'
+            content TEXT NOT NULL
         )
     """)
 
@@ -448,7 +451,6 @@ def increase_file_count(user_id):
 # =========================================================
 
 async def is_user_joined_all(bot, user_id):
-    """টাইমআউট ও এরর-প্রটেক্টেড মেম্বারশিপ চেকার"""
     if is_admin(user_id):
         return True
 
@@ -550,7 +552,7 @@ def save_submitted_emails(emails):
 
 
 # =========================================================
-# KEYBOARD & MENUS
+# KEYBOARD & DYNAMIC MENUS
 # =========================================================
 
 def get_bottom_keyboard():
@@ -571,26 +573,42 @@ def get_bottom_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
+def build_dynamic_markup(parent_id=0):
+    """ডাটাবেজ থেকে কাস্টম ডায়নামিক বাটন সাজানো"""
+    btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=? ORDER BY id ASC", (parent_id,), fetchall=True)
+    if not btns and parent_id == 0:
+        return None
+
+    kb = []
+    for b in btns:
+        if b["btn_type"] == "url":
+            kb.append([InlineKeyboardButton(b["title"], url=b["content"])])
+        else:
+            kb.append([InlineKeyboardButton(b["title"], callback_data=f"dyn_click:{b['id']}")])
+
+    if parent_id != 0:
+        parent_row = db_execute("SELECT parent_id FROM dynamic_buttons WHERE id=?", (parent_id,), fetchone=True)
+        prev_parent = parent_row["parent_id"] if parent_row else 0
+        kb.append([InlineKeyboardButton("⬅️ ব্যাকে যান", callback_data=f"dyn_back:{prev_parent}")])
+
+    return InlineKeyboardMarkup(kb)
+
+
 async def show_main_menu(update, context):
     user = update.effective_user
     add_user(user)
 
     msg_text = "🎉 **আপনি আমাদের সাথে সফলভাবে যুক্ত আছেন।**\n\nনিচের বাটনগুলো চেপে আপনার অপশন বেছে নিন:"
-
-    buttons = db_execute("SELECT * FROM buttons ORDER BY id DESC", fetchall=True)
-    inline_kb = None
-    if buttons:
-        kb_list = [[InlineKeyboardButton(b["title"], url=b["url"])] for b in buttons]
-        inline_kb = InlineKeyboardMarkup(kb_list)
+    dyn_markup = build_dynamic_markup(parent_id=0)
 
     if update.callback_query:
         await update.callback_query.message.reply_text(msg_text, reply_markup=get_bottom_keyboard(), parse_mode="Markdown")
-        if inline_kb:
-            await update.callback_query.message.reply_text("Important Links:", reply_markup=inline_kb)
+        if dyn_markup:
+            await update.callback_query.message.reply_text("📌 **গুরুত্বপূর্ণ মেনু ও লিংক:**", reply_markup=dyn_markup)
     else:
         await update.message.reply_text(msg_text, reply_markup=get_bottom_keyboard(), parse_mode="Markdown")
-        if inline_kb:
-            await update.message.reply_text("Important Links:", reply_markup=inline_kb)
+        if dyn_markup:
+            await update.message.reply_text("📌 **গুরুত্বপূর্ণ মেনু ও লিংক:**", reply_markup=dyn_markup)
 
 
 # =========================================================
@@ -848,10 +866,9 @@ async def show_admin_panel(query, user_id):
         [InlineKeyboardButton(f"💵 জিমেইল রেট এডিট (বর্তমান: ৳{current_rate:.2f})", callback_data="admin_edit_rate")],
         [InlineKeyboardButton("📂 ফাইল হিস্ট্রি ও রিপোর্ট (Users Files)", callback_data="admin_file_history:0")],
         [InlineKeyboardButton("💬 বাটন মেসেজ কন্ট্রোল (Add/Edit/Delete)", callback_data="admin_messages_menu")],
-        [InlineKeyboardButton("✏️ মেনু বাটন নাম এডিট", callback_data="admin_edit_buttons_menu")],
+        [InlineKeyboardButton("✏️ ডিফল্ট বাটন নাম এডিট", callback_data="admin_edit_buttons_menu")],
+        [InlineKeyboardButton("🎛 কাস্টম বাটন ও সাব-মেনু বিল্ডার", callback_data="dyn_manage:0")],
         [InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ / আবর্জনা মুছুন", callback_data="admin_clear_cache")],
-        [InlineKeyboardButton("➕ নতুন লিংক বাটন", callback_data="admin_add_button"),
-         InlineKeyboardButton("🗑 লিংক বাটন মুছুন", callback_data="admin_remove_button")],
         [InlineKeyboardButton("📢 Broadcast Post", callback_data="admin_broadcast"),
          InlineKeyboardButton("✉️ Single Message", callback_data="admin_single_message")],
         [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")]
@@ -914,6 +931,38 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ আপনি এখনো জয়েন করেননি! চ্যানেল ও গ্রুপে জয়েন হয়ে আবার ভেরিফাই চাপুন।", show_alert=True)
         return
 
+    # -------------------------------------------------------------
+    # সাধারণ ইউজার: ডায়নামিক বাটন ক্লিক ও মাল্টি-মেসেজ ডেলিভারি
+    # -------------------------------------------------------------
+    if data.startswith("dyn_click:"):
+        btn_id = int(data.split(":")[1])
+        btn = db_execute("SELECT * FROM dynamic_buttons WHERE id=?", (btn_id,), fetchone=True)
+        if not btn:
+            await query.answer("বাটনটি আর কার্যকর নেই!")
+            return
+
+        # একাধিক মেসেজ বিভক্ত করে পাঠানো
+        messages = btn["content"].split("---SPLIT---")
+        for m in messages:
+            cleaned = m.strip()
+            if cleaned:
+                await context.bot.send_message(chat_id=user_id, text=cleaned, parse_mode="Markdown")
+
+        sub_markup = build_dynamic_markup(parent_id=btn_id)
+        if sub_markup:
+            await context.bot.send_message(chat_id=user_id, text=f"📂 **{btn['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
+        return
+
+    if data.startswith("dyn_back:"):
+        p_id = int(data.split(":")[1])
+        back_markup = build_dynamic_markup(parent_id=p_id)
+        text = "📌 **মেনু তালিকা:**" if p_id != 0 else "📌 **মূল কাস্টম বাটন মেনু:**"
+        await query.edit_message_text(text, reply_markup=back_markup, parse_mode="Markdown")
+        return
+
+    # -------------------------------------------------------------
+    # অ্যাডমিন প্যানেল এক্সেস
+    # -------------------------------------------------------------
     if not is_admin(user_id):
         return
 
@@ -929,6 +978,77 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(msg, show_alert=True)
         await show_admin_panel(query, user_id)
 
+    # -------------------------------------------------------------
+    # ডায়নামিক বাটন ম্যানেজার (Add / Individual Delete / Sub-buttons)
+    # -------------------------------------------------------------
+    elif data.startswith("dyn_manage:"):
+        p_id = int(data.split(":")[1])
+        btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=? ORDER BY id ASC", (p_id,), fetchall=True)
+
+        kb = []
+        if btns:
+            for b in btns:
+                t_label = "🔗" if b["btn_type"] == "url" else "💬"
+                kb.append([InlineKeyboardButton(f"{t_label} {b['title']}", callback_data=f"dyn_item_opts:{b['id']}")])
+
+        kb.append([InlineKeyboardButton("➕ এই লেভেলে নতুন বাটন যোগ করুন", callback_data=f"dyn_add_init:{p_id}")])
+        if p_id != 0:
+            parent_row = db_execute("SELECT parent_id FROM dynamic_buttons WHERE id=?", (p_id,), fetchone=True)
+            prev_p = parent_row["parent_id"] if parent_row else 0
+            kb.append([InlineKeyboardButton("⬅️ আগের মেনুতে ফিরুন", callback_data=f"dyn_manage:{prev_p}")])
+        else:
+            kb.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")])
+
+        lvl_name = "রুট লেভেল (Root)" if p_id == 0 else f"সাব-মেনু (Parent ID: {p_id})"
+        await query.edit_message_text(
+            f"🎛 **কাস্টম বাটন ও সাব-মেনু বিল্ডার**\n📍 অবস্থান: {lvl_name}\n\n"
+            f"কোনো বাটনে ক্লিক করে সেটির সাব-বাটন তৈরি করতে পারেন অথবা এক এক করে ডিলিট করতে পারেন:",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("dyn_item_opts:"):
+        b_id = int(data.split(":")[1])
+        b = db_execute("SELECT * FROM dynamic_buttons WHERE id=?", (b_id,), fetchone=True)
+        if not b:
+            await query.answer("বাটন পাওয়া যায়নি!")
+            return
+
+        kb = [
+            [InlineKeyboardButton("➕ এর ভেতরে সাব-বাটন যোগ করুন", callback_data=f"dyn_add_init:{b['id']}")],
+            [InlineKeyboardButton("📂 এর সাব-বাটনগুলো দেখুন ও ম্যানেজ করুন", callback_data=f"dyn_manage:{b['id']}")],
+            [InlineKeyboardButton("🗑 শুধুমাত্র এই বাটনটি ডিলিট করুন", callback_data=f"dyn_del_one:{b['id']}")],
+            [InlineKeyboardButton("⬅️ তালিকায় ফিরুন", callback_data=f"dyn_manage:{b['parent_id']}")]
+        ]
+
+        desc = f"🔗 লিংক: `{b['content']}`" if b["btn_type"] == "url" else f"💬 বার্তা প্রিভিউ:\n`{b['content'][:150]}`"
+        await query.edit_message_text(
+            f"📌 **বাটন সেটিংস:** {b['title']}\n"
+            f"ধরন: {b['btn_type'].upper()}\n{desc}\n\n"
+            f"একটি অপশন নির্বাচন করুন:",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("dyn_del_one:"):
+        b_id = int(data.split(":")[1])
+        b = db_execute("SELECT * FROM dynamic_buttons WHERE id=?", (b_id,), fetchone=True)
+        if b:
+            parent_id = b["parent_id"]
+            db_execute("DELETE FROM dynamic_buttons WHERE id=?", (b_id,))
+            await query.answer("বাটনটি সফলভাবে ডিলিট করা হয়েছে!", show_alert=True)
+            query.data = f"dyn_manage:{parent_id}"
+            await button_handler(update, context)
+
+    elif data.startswith("dyn_add_init:"):
+        p_id = int(data.split(":")[1])
+        context.user_data["dyn_parent_id"] = p_id
+        context.user_data["state"] = "dyn_waiting_title"
+        await query.edit_message_text("✍️ নতুন বাটনের নাম লিখে পাঠান (যেমন: 🎁 অফার বা 📚 নিয়মাবলী):\n(বাতিল করতে /cancel পাঠান)")
+
+    # -------------------------------------------------------------
+    # ওনার কর্তৃক অ্যাডমিন ম্যানেজমেন্ট
+    # -------------------------------------------------------------
     elif data == "owner_manage_admins":
         if user_id != get_owner_id():
             await query.answer("❌ শুধুমাত্র মূল মালিকের এক্সেস আছে!", show_alert=True)
@@ -1043,20 +1163,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["state"] = "waiting_new_button_title"
         await query.edit_message_text(f"বাটনটির নতুন নাম লিখে পাঠান:\n(কী: {btn_key})")
 
-    elif data == "admin_add_button":
-        context.user_data["state"] = "admin_add_button_title"
-        await query.edit_message_text("➕ Add Link Button\n\nপ্রথমে বাটনের নাম লিখে পাঠান:")
-
-    elif data == "admin_remove_button":
-        buttons = db_execute("SELECT * FROM buttons ORDER BY id DESC", fetchall=True)
-        if not buttons:
-            await query.edit_message_text("কোনো কাস্টম লিংক বাটন নেই।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]]))
-            return
-
-        keyboard = [[InlineKeyboardButton(f"❌ {b['title']}", callback_data=f"delete_button:{b['id']}")] for b in buttons]
-        keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")])
-        await query.edit_message_text("মুছে ফেলতে বাটন নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
-
     elif data == "admin_broadcast":
         context.user_data["state"] = "admin_broadcast"
         await query.edit_message_text("📢 ব্রডকাস্ট করার মেসেজটি লিখে পাঠান:")
@@ -1081,6 +1187,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
         )
 
+    # -------------------------------------------------------------
+    # অ্যাডমিন ফাইল হিস্ট্রি ও ডিলিট
+    # -------------------------------------------------------------
     elif data.startswith("admin_file_history:"):
         page = int(data.split(":")[1])
         limit = 5
@@ -1185,6 +1294,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.answer("এক্সেল ফাইল পাঠানো হয়েছে!")
 
+    # -------------------------------------------------------------
+    # ইউজার হিস্ট্রি
+    # -------------------------------------------------------------
     elif data == "user_hist_live":
         subs = db_execute(
             "SELECT * FROM submissions WHERE user_id=? AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
@@ -1249,6 +1361,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
         await query.edit_message_text("📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\nনিচের যেকোনো অপশনে ক্লিক করে বিস্তারিত দেখুন:", reply_markup=hist_kb, parse_mode="Markdown")
 
+    # -------------------------------------------------------------
+    # ধাপ ১ ও ধাপ ৩ সাবমিশন লজিক
+    # -------------------------------------------------------------
     elif data.startswith("sub_s1_open:"):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
@@ -1546,6 +1661,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+    # Withdrawals
     elif data.startswith("approve_withdraw:"):
         w_id = int(data.split(":")[1])
         w = db_execute("SELECT * FROM withdrawals WHERE id=?", (w_id,), fetchone=True)
@@ -1582,12 +1698,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    elif data.startswith("delete_button:"):
-        b_id = int(data.split(":")[1])
-        db_execute("DELETE FROM buttons WHERE id=?", (b_id,))
-        await query.answer("বাটন মুছে ফেলা হয়েছে।")
-        await show_admin_panel(query, user_id)
-
 
 # =========================================================
 # MESSAGE HANDLER (PRIVATE ONLY)
@@ -1623,12 +1733,47 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
+    # ১. ডায়নামিক বাটন উইজার্ড ইনপুট (Multi-message & Sub-buttons)
+    if is_admin(user.id) and state == "dyn_waiting_title":
+        context.user_data["dyn_title"] = text
+        context.user_data["state"] = "dyn_waiting_content"
+        await update.message.reply_text(
+            f"✅ বাটনের নাম: **{text}**\n\n"
+            "এবার এই বাটনের তথ্য পাঠিয়ে দিন:\n\n"
+            "🔹 **যদি লিংক দিতে চান:** সরাসরি URL লিখে পাঠান (যেমন: `https://t.me/...`)\n"
+            "🔹 **যদি মেসেজ দিতে চান:** মেসেজটি লিখে দিন।\n"
+            "💡 **টিপস (একাধিক মেসেজ):** আপনি যদি চান এই বাটনে চাপ দিলে ২-৩টি মেসেজ পর পর আসবে, তবে মেসেজগুলোর মাঝখানে `---SPLIT---` লিখে দিন!\n\n"
+            "উদাহরণ:\n"
+            "`স্বাগতম আমাদের নিয়মে!---SPLIT---প্রতি জিমেইলে ২৫ টাকা পাবেন।---SPLIT---ধন্যবাদ সাথে থাকার জন্য।`",
+            parse_mode="Markdown"
+        )
+        return
+
+    if is_admin(user.id) and state == "dyn_waiting_content":
+        parent_id = context.user_data.get("dyn_parent_id", 0)
+        title = context.user_data.get("dyn_title")
+
+        if text.startswith(("http://", "https://", "tg://")):
+            b_type = "url"
+        else:
+            b_type = "message"
+
+        db_execute(
+            "INSERT INTO dynamic_buttons (parent_id, title, btn_type, content) VALUES (?, ?, ?, ?)",
+            (parent_id, title, b_type, text)
+        )
+        context.user_data.clear()
+        await update.message.reply_text(f"🎉 **বাটন সফলভাবে তৈরি হয়েছে!**\n\nনাম: {title}\nধরন: {b_type.upper()}")
+        return
+
+    # ২. সাপোর্ট বাটন
     if text == btn_sup:
         sup_text = get_custom_msg("support")
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💬 সরাসরি মেসেজ পাঠান / Support", url=SUPPORT_URL)]])
         await update.message.reply_text(sup_text, reply_markup=keyboard)
         return
 
+    # ৩. অন্যান্য বাটনের ক্ষেত্রে মেম্বারশিপ যাচাই
     if not is_admin(user.id):
         joined = await is_user_joined_all(context.bot, user.id)
         if not joined:
@@ -1638,6 +1783,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+    # ওনার কর্তৃক অ্যাডমিনের নাম এডিট
     if user.id == get_owner_id() and state == "waiting_helper_new_name":
         target_id = context.user_data.get("target_helper_id")
         if text:
@@ -1757,22 +1903,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = user.first_name or "User"
         rules = get_custom_msg("rules").replace("{name}", name)
         await update.message.reply_text(rules)
-        return
-
-    if is_admin(user.id) and state == "admin_add_button_title":
-        context.user_data["button_title"] = text
-        context.user_data["state"] = "admin_add_button_url"
-        await update.message.reply_text("বাটনের URL দিন:")
-        return
-
-    if is_admin(user.id) and state == "admin_add_button_url":
-        if not text.startswith(("http://", "https://", "tg://")):
-            await update.message.reply_text("❌ সঠিক URL দিন।")
-            return
-        t = context.user_data.get("button_title")
-        db_execute("INSERT INTO buttons (title, url) VALUES (?, ?)", (t, text))
-        context.user_data.clear()
-        await update.message.reply_text(f"✅ বাটন যুক্ত হয়েছে: {t} -> {text}")
         return
 
     if is_admin(user.id) and state == "admin_broadcast":
