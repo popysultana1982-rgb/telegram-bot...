@@ -210,7 +210,7 @@ def init_db():
 
 
 # =========================================================
-# CONFIG HELPERS
+# CONFIG HELPERS & IN-MEMORY CACHE
 # =========================================================
 
 CONFIG_DEFAULTS = {
@@ -225,10 +225,21 @@ CONFIG_DEFAULTS = {
     "maintenance": "0"
 }
 
+CONFIG_CACHE = {}
 
 def get_config(key, as_type=float):
+    now = datetime.now()
+    if key in CONFIG_CACHE:
+        val, expire_at = CONFIG_CACHE[key]
+        if now < expire_at:
+            try:
+                return as_type(val)
+            except (ValueError, TypeError):
+                return as_type(CONFIG_DEFAULTS.get(key, "0"))
+
     res = db_execute("SELECT value FROM settings WHERE key=%s", (key,), fetchone=True)
     val = res["value"] if res else CONFIG_DEFAULTS.get(key, "0")
+    CONFIG_CACHE[key] = (val, now + timedelta(seconds=60))
     try:
         return as_type(val)
     except (ValueError, TypeError):
@@ -236,6 +247,7 @@ def get_config(key, as_type=float):
 
 
 def set_config(key, val):
+    CONFIG_CACHE[key] = (str(val), datetime.now() + timedelta(seconds=60))
     db_execute("""
         INSERT INTO settings (key, value) VALUES (%s, %s)
         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value
@@ -416,6 +428,10 @@ DEFAULT_MESSAGES = {
         "⚠️ এক ফাইলে সর্বোচ্চ {email_limit}টি @gmail.com থাকতে হবে। বিগত {cooldown} দিনের মধ্যে জমা দেওয়া কোনো মেইল গ্রহণ করা হবে না।"
     ),
     "support": "যেকোনো সমস্যা, প্রশ্ন বা সহায়তার জন্য নিচে থাকা বাটনে ক্লিক করে সাপোর্টে মেসেজ পাঠান:",
+    "tutorial": (
+        "🎥 **ভিডিও টিউটোরিয়াল ও কাজের গাইড:**\n\n"
+        "বটে কীভাবে কাজ করবেন, কীভাবে জিমেইল ফাইল তৈরি করবেন এবং কীভাবে টাকা উইথড্র করবেন তা বিস্তারিত দেখতে নিচের বাটনে ক্লিক করুন:"
+    ),
     "maintenance": (
         "⚠️ **বট আপডেটের কাজ চলছে!** 🛠\n\n"
         "সম্মানিত ইউজার, আমাদের সিস্টেমে জরুরি আপডেটের কাজ চলছে। "
@@ -433,6 +449,7 @@ MESSAGE_NAMES = {
     "welcome": "🎉 Welcome Message & Rules",
     "rules": "📜 Rules Message",
     "sell": "📤 Sell Gmail Instruction",
+    "tutorial": "▶️ Tutorial Message",
     "referral": "👥 Referral Message",
     "support": "📞 Support Text",
     "maintenance": "🛠 Maintenance Notice"
@@ -624,7 +641,7 @@ def get_rejoin_markup():
 
 
 # =========================================================
-# VALIDATIONS (DUPLICATES, PHONE, BINANCE & GMAIL)
+# VALIDATIONS
 # =========================================================
 
 BD_PHONE_REGEX = re.compile(r"^01[3-9]\d{8}$")
@@ -690,13 +707,15 @@ def get_bottom_keyboard():
     btn_hist = get_button_title("history", "📜 হিস্ট্রি")
     btn_ref = get_button_title("referral", "👥 REFERRAL")
     btn_rules = get_button_title("rules", "📜 RULES")
+    btn_tut = get_button_title("tutorial", "▶️ TUTORIAL")
     btn_sup = get_button_title("support", "📞 SUPPORT")
 
     keyboard = [
         [KeyboardButton(btn_sell)],
         [KeyboardButton(btn_bal), KeyboardButton(btn_wd)],
         [KeyboardButton(btn_hist), KeyboardButton(btn_ref)],
-        [KeyboardButton(btn_rules), KeyboardButton(btn_sup)]
+        [KeyboardButton(btn_rules), KeyboardButton(btn_tut)],
+        [KeyboardButton(btn_sup)]
     ]
 
     custom_reply_btns = db_execute("SELECT title FROM dynamic_buttons WHERE parent_id=0 AND show_in_reply=1 ORDER BY id ASC", fetchall=True)
@@ -793,13 +812,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u_data = get_user(user.id)
         seen_rules = u_data["seen_rules"] if u_data else 0
 
-        joined = await is_user_joined_all(context.bot, user.id)
-
-        if joined:
-            await show_main_menu(update, context)
-            return
-
-        if not seen_rules:
+        # নতুন ইউজার হলে সবসময় ওয়েলকাম ও রুলস মেসেজ আগে দেখাবে
+        if is_new or not seen_rules:
             name = user.first_name or "User"
             welcome_text = get_custom_msg("welcome").replace("{name}", name)
             clean_w, w_kb = parse_text_and_buttons(welcome_text)
@@ -813,10 +827,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("📌 **গুরুত্বপূর্ণ লিংক:**", reply_markup=w_kb)
             return
 
-        await update.message.reply_text(
-            "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:",
-            reply_markup=get_rejoin_markup()
-        )
+        # পুরাতন কিন্তু জয়েন করা নেই
+        joined = await is_user_joined_all(context.bot, user.id)
+        if not joined:
+            await update.message.reply_text(
+                "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:",
+                reply_markup=get_rejoin_markup()
+            )
+            return
+
+        await show_main_menu(update, context)
 
     except Exception as e:
         print(f"Error in start: {e}")
@@ -1115,6 +1135,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=user_id, text=f"📂 **{btn['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
         return
 
+    # হিস্ট্রি সেকশন
     if data == "user_hist_live":
         subs = db_execute(
             "SELECT * FROM submissions WHERE user_id=%s AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
@@ -1123,7 +1144,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if not subs:
             back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
-            await query.edit_message_text("⏳ **বর্তমানে আপনার কোনো ফাইল প্রসেসিং বা পর্যবেক্ষণে নেই।**\n\nনতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখা যাবে।", reply_markup=back_kb, parse_mode="Markdown")
+            await query.edit_message_text("⏳ **বর্তমানে আপনার কোনো ফাইল প্রসেসিং বা পর্যালোচনায় নেই।**\n\nনতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখা যাবে।", reply_markup=back_kb, parse_mode="Markdown")
             return
 
         hist_msg = "⏳ **আপনার লাইভ ও চলমান ফাইলগুলোর স্ট্যাটাস:**\n\n"
@@ -1174,12 +1195,54 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
         return
 
+    # লাইভ ও অতীতের উইথড্র হিস্ট্রি
+    elif data == "user_hist_withdrawals":
+        wds = db_execute("SELECT * FROM withdrawals WHERE user_id=%s ORDER BY id DESC LIMIT 20", (user_id,), fetchall=True)
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
+        
+        if not wds:
+            await query.edit_message_text("💸 **আপনার কোনো উইথড্রয়াল হিস্ট্রি পাওয়া যায়নি।**\n\nআপনি টাকা উত্তোলন করলে তার লাইভ ও পূর্ববর্তী হিস্ট্রি এখানে দেখতে পাবেন।", reply_markup=back_kb, parse_mode="Markdown")
+            return
+
+        u_rate = get_config("usdt_rate", float)
+        wd_msg = "💸 **আপনার উইথড্রয়াল হিস্ট্রি (লাইভ ও অতীত):**\n\n"
+        
+        for w in wds:
+            status_map = {
+                "pending": "🟡 পেন্ডিং (প্রসেসিং চলছে)",
+                "approved": "🟢 সফল / পেইড (Approved)",
+                "rejected": "🔴 বাতিল (Rejected)"
+            }
+            st_text = status_map.get(w["status"], w["status"])
+            rec_bdt = float(w["receive_amount"])
+            rec_usdt = rec_bdt / u_rate if u_rate > 0 else 0
+
+            wd_msg += (
+                f"🆔 **উইথড্র ID: #{w['id']}**\n"
+                f"📅 তারিখ: {w['created_at'][:10]}\n"
+                f"💳 মেথড: **{w['method']}** (`{w['account']}`)\n"
+                f"💰 উত্তোলিত: ৳{float(w['amount']):.2f} (ফি: ৳{float(w['fee']):.2f})\n"
+                f"💵 পেমেন্ট পরিমাণ: ৳{rec_bdt:.2f} BDT"
+            )
+            if w["method"] == "Binance":
+                wd_msg += f" (${rec_usdt:.2f} USDT)"
+            wd_msg += f"\n⚡ বর্তমান অবস্থা: **{st_text}**\n-----------------------------\n"
+
+        await query.edit_message_text(wd_msg, reply_markup=back_kb, parse_mode="Markdown")
+        return
+
     elif data == "user_hist_menu":
         hist_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
-            [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")]
+            [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")],
+            [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")]
         ])
-        await query.edit_message_text("📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\nনিচের যেকোনো অপশনে ক্লিক করে বিস্তারিত দেখুন:", reply_markup=hist_kb, parse_mode="Markdown")
+        await query.edit_message_text(
+            "📜 **আপনার হিস্ট্রি ক্যাটাগরি নির্বাচন করুন:**\n\n"
+            "নিচের যেকোনো অপশনে ক্লিক করে লাইভ বা পূর্বের তথ্য দেখুন:",
+            reply_markup=hist_kb,
+            parse_mode="Markdown"
+        )
         return
 
     # -------------------------------------------------------------
@@ -1228,11 +1291,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         kb = [[InlineKeyboardButton("💬 ইউজারের সাথে চ্যাট", url=chat_url)]]
         if sub["status"] == "pending":
-            kb.append([InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক বাছাই শুরু করুন", callback_data=f"sub_s1_open:{sub_id}")])
-            kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:1:{sub_id}")])
+            kb.append([InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক বাছাই শুরু করুন", callback_data=f"sub_s1_open:{sub_id}")],
+                      [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:1:{sub_id}")])
         elif sub["status"] == "stage2_review":
-            kb.append([InlineKeyboardButton("🔍 ধাপ ৩: চূড়ান্ত অনুমোদন শুরু করুন", callback_data=f"sub_s3_open:{sub_id}")])
-            kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")])
+            kb.append([InlineKeyboardButton("🔍 ধাপ ৩: চূড়ান্ত অনুমোদন শুরু করুন", callback_data=f"sub_s3_open:{sub_id}")],
+                      [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")])
         kb.append([InlineKeyboardButton("⬅️ পেন্ডিং লিস্ট", callback_data="admin_pending_files")])
 
         await query.edit_message_text(
@@ -1483,7 +1546,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("✏️ History বাটন", callback_data="edit_btn:history")],
             [InlineKeyboardButton("✏️ Referral বাটন", callback_data="edit_btn:referral"),
              InlineKeyboardButton("✏️ Rules বাটন", callback_data="edit_btn:rules")],
-            [InlineKeyboardButton("✏️ Support বাটন", callback_data="edit_btn:support")],
+            [InlineKeyboardButton("✏️ Tutorial বাটন", callback_data="edit_btn:tutorial"),
+             InlineKeyboardButton("✏️ Support বাটন", callback_data="edit_btn:support")],
             [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
         ]
         await query.edit_message_text("✏️ কোন বাটনটির নাম পরিবর্তন করতে চান?", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -2185,6 +2249,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     btn_hist = get_button_title("history", "📜 হিস্ট্রি")
     btn_ref = get_button_title("referral", "👥 REFERRAL")
     btn_rules = get_button_title("rules", "📜 RULES")
+    btn_tut = get_button_title("tutorial", "▶️ TUTORIAL")
     btn_sup = get_button_title("support", "📞 SUPPORT")
 
     if text == "/cancel":
@@ -2352,6 +2417,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(clean_sup, reply_markup=(sup_kb or def_kb), parse_mode="Markdown")
         return
 
+    # টিউটোরিয়াল বাটন
+    if text == btn_tut or "TUTORIAL" in text.upper():
+        tut_text = get_custom_msg("tutorial")
+        clean_tut, tut_kb = parse_text_and_buttons(tut_text)
+        def_tut_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📺 Watch Video Tutorial", url="https://youtube.com")]
+        ])
+        await update.message.reply_text(clean_tut, reply_markup=(tut_kb or def_tut_kb), parse_mode="Markdown")
+        return
+
     if not is_admin(user.id):
         joined = await is_user_joined_all(context.bot, user.id)
         if not joined:
@@ -2391,18 +2466,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == btn_hist:
         hist_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
-            [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")]
+            [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")],
+            [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")]
         ])
         await update.message.reply_text(
-            "📜 **আপনার সাবমিশন হিস্ট্রি নির্বাচন করুন:**\n\n"
-            "🔹 **লাইভ চলমান সাবমিশন:** বর্তমানে রিভিউ বা ২৪-৪৮ ঘণ্টা পর্যালোচনায় থাকা ফাইল দেখতে পাবেন।\n"
-            "🔹 **সকল সাবমিশন হিস্ট্রি:** শুরু থেকে আপনার জমা দেওয়া সকল ফাইলের ফলাফল দেখতে পাবেন।",
+            "📜 **আপনার হিস্ট্রি ক্যাটাগরি নির্বাচন করুন:**\n\n"
+            "🔹 **লাইভ চলমান সাবমিশন:** বর্তমানে রিভিউ বা ২৪-৪৮ ঘণ্টা পর্যালোচনায় থাকা ফাইল।\n"
+            "🔹 **সকল সাবমিশন হিস্ট্রি:** আপনার জমা দেওয়া পূর্বের সকল ফাইলের বিস্তারিত।\n"
+            "🔹 **উইথড্র হিস্ট্রি:** আপনার পেন্ডিং ও সফল হওয়া সকল উইথড্রর লাইভ তথ্য।",
             reply_markup=hist_kb,
             parse_mode="Markdown"
         )
         return
 
-    # সেল ফ্রেশ জিমেইল বাটন হ্যান্ডলিং (নাম বা ইমোজির সব রকম ভেরিয়েশন সাপোর্ট)
     if text == btn_sell or "SELL FRESH GMAIL ACCOUNT" in text:
         count = get_today_file_count(user.id)
         d_lim = get_config("daily_file_limit", int)
@@ -2567,7 +2643,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         w_id = last_w["id"] if last_w else 1
         context.user_data.clear()
 
-        await update.message.reply_text(f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: {text}\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)")
+        await update.message.reply_text(f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: {text}\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\n⚡ আপনার উইথড্র স্ট্যাটাস '📜 হিস্ট্রি' > '💸 উইথড্র হিস্ট্রি'-তে লাইভ দেখতে পাবেন।")
 
         owner_id = get_owner_id()
         if owner_id:
@@ -2788,7 +2864,7 @@ def main():
     
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler))
 
-    print("Optimized Supabase Gmail Sell Bot is running...")
+    print("Gmail Sell Bot with Withdraw History & Tutorial Button is running...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
