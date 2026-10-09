@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import openpyxl
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import SimpleConnectionPool
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -46,11 +47,11 @@ if not DATABASE_URL:
 
 PORT = int(os.environ.get("PORT", 10000))
 
-# অফিসিয়াল গ্রুপ (যেখানে ব্রডকাস্ট পোস্ট হবে)
+# অফিসিয়াল গ্রুপ
 FORCE_GROUP_CHAT_ID = -1004471047712
 FORCE_GROUP_LINK = "https://t.me/+rVP6CkmqrnFlNzA1"
 
-# পেমেন্ট প্রুফ চ্যানেল (যেখানে ব্রডকাস্ট যাবে না)
+# পেমেন্ট প্রুফ চ্যানেল
 FORCE_CHANNEL_CHAT_ID = -1003991468184
 FORCE_CHANNEL_LINK = "https://t.me/fast_payment_proof_chanel"
 
@@ -82,39 +83,39 @@ def run_web_server():
 
 
 # =========================================================
-# POSTGRESQL DATABASE & SCHEMA (SUPABASE)
+# POSTGRESQL CONNECTION POOL (SUPERFAST)
 # =========================================================
 
-db_lock = threading.Lock()
-pg_conn = None
+db_pool = None
+pool_lock = threading.Lock()
 
-def get_db_connection():
-    global pg_conn
-    if pg_conn is None or pg_conn.closed != 0:
-        pg_conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-        pg_conn.autocommit = True
-    return pg_conn
+def get_db_pool():
+    global db_pool
+    if db_pool is None:
+        with pool_lock:
+            if db_pool is None:
+                db_pool = SimpleConnectionPool(1, 15, DATABASE_URL)
+    return db_pool
 
 def db_execute(query, params=(), fetchone=False, fetchall=False):
-    global pg_conn
-    with db_lock:
-        pg_query = query.replace("?", "%s")
-        for _ in range(3):
-            try:
-                conn = get_db_connection()
-                with conn.cursor() as cur:
-                    cur.execute(pg_query, params)
-                    if fetchone:
-                        return cur.fetchone()
-                    if fetchall:
-                        return cur.fetchall()
-                    return None
-            except (psycopg2.OperationalError, psycopg2.InterfaceError):
-                pg_conn = None
-            except Exception as e:
-                print(f"Database error: {e}")
-                raise e
-        return None
+    pool = get_db_pool()
+    conn = pool.getconn()
+    conn.autocommit = True
+    pg_query = query.replace("?", "%s")
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(pg_query, params)
+            if fetchone:
+                return cur.fetchone()
+            if fetchall:
+                return cur.fetchall()
+            return None
+    except Exception as e:
+        print(f"Database query error: {e}")
+        raise e
+    finally:
+        pool.putconn(conn)
+
 
 def init_db():
     db_execute("""
@@ -201,6 +202,12 @@ def init_db():
         )
     """)
 
+    for k, v in CONFIG_DEFAULTS.items():
+        db_execute("""
+            INSERT INTO settings (key, value) VALUES (%s, %s)
+            ON CONFLICT (key) DO NOTHING
+        """, (k, v))
+
 
 # =========================================================
 # CONFIG HELPERS
@@ -236,7 +243,7 @@ def set_config(key, val):
 
 
 # =========================================================
-# SMART BUTTON PARSER & DIRECT CHAT LINK
+# BUTTON PARSER & DIRECT CHAT LINK
 # =========================================================
 
 BUTTON_PATTERN = re.compile(r"\[([^\|\]]+)\|([^\]]+)\]")
@@ -339,8 +346,8 @@ async def notify_all_admins(context, message, exclude_user_id=None):
                 text=message, 
                 parse_mode="Markdown"
             )
-        except Exception as e:
-            print(f"Failed to send admin notify to {a_id}: {e}")
+        except Exception:
+            pass
 
 
 def is_maintenance_mode():
@@ -668,10 +675,8 @@ def check_recent_duplicate_emails(emails):
 
 def save_submitted_emails(emails):
     now_str = datetime.now().isoformat()
-    with db_lock:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            cur.executemany("INSERT INTO submitted_emails (email, submitted_at) VALUES (%s, %s)", [(e, now_str) for e in emails])
+    for e in emails:
+        db_execute("INSERT INTO submitted_emails (email, submitted_at) VALUES (%s, %s)", (e, now_str))
 
 
 # =========================================================
@@ -679,7 +684,7 @@ def save_submitted_emails(emails):
 # =========================================================
 
 def get_bottom_keyboard():
-    btn_sell = get_button_title("sell", "📤 SELL FRESH GMAIL ACCOUNT")
+    btn_sell = get_button_title("sell", "📩 SELL FRESH GMAIL ACCOUNT")
     btn_bal = get_button_title("balance", "💰 BALANCE")
     btn_wd = get_button_title("withdraw", "💸 WITHDRAW")
     btn_hist = get_button_title("history", "📜 হিস্ট্রি")
@@ -1081,7 +1086,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
-    # ১. মেম্বারশিপ ভেরিফাই
     if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         if joined:
@@ -1092,7 +1096,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ আপনি এখনো জয়েন করেননি! চ্যানেল ও গ্রুপে জয়েন হয়ে আবার ভেরিফাই চাপুন।", show_alert=True)
         return
 
-    # ২. ডায়নামিক সাব-বাটন ও মাল্টিপল মেসেজ ক্লিক
     if data.startswith("dyn_click:"):
         btn_id = int(data.split(":")[1])
         btn = db_execute("SELECT * FROM dynamic_buttons WHERE id=%s", (btn_id,), fetchone=True)
@@ -1112,7 +1115,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=user_id, text=f"📂 **{btn['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
         return
 
-    # ৩. ইউজারের সাবমিশন হিস্ট্রি দেখা
     if data == "user_hist_live":
         subs = db_execute(
             "SELECT * FROM submissions WHERE user_id=%s AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
@@ -1199,9 +1201,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(msg, show_alert=True)
         await show_admin_panel(query, user_id)
 
-    # -------------------------------------------------------------
-    # পেন্ডিং ফাইল ম্যানেজার
-    # -------------------------------------------------------------
     elif data == "admin_pending_files":
         subs = db_execute("SELECT * FROM submissions WHERE status IN ('pending', 'stage2_review') ORDER BY id DESC LIMIT 15", fetchall=True)
         if not subs:
@@ -1246,9 +1245,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    # -------------------------------------------------------------
-    # সকল ইউজার ডিরেক্টরি
-    # -------------------------------------------------------------
     elif data.startswith("admin_all_users:"):
         users = get_all_users_list(limit=25)
         if not users:
@@ -1267,9 +1263,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb.append([InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    # -------------------------------------------------------------
-    # রেফারেল ট্র্যাকার ও ম্যানুয়াল রেফার যোগ
-    # -------------------------------------------------------------
     elif data == "admin_ref_tracker":
         top = get_top_referrers()
         if not top:
@@ -1295,9 +1288,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    # -------------------------------------------------------------
-    # আর্থিক লেনদেন ও সিস্টেম লিমিট মেনু
-    # -------------------------------------------------------------
     elif data == "admin_limits_menu":
         min_w = get_config("min_withdraw", float)
         w_fee = get_config("withdraw_fee_percent", float)
@@ -1337,9 +1327,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         await query.edit_message_text(f"✍️ **{names.get(cfg_key, cfg_key)}** এর নতুন মান লিখে পাঠিয়ে দিন:\n\n(বাতিল করতে /cancel পাঠান)")
 
-    # -------------------------------------------------------------
-    # বড় কীবোর্ড ও ডায়নামিক বাটন বিল্ডার
-    # -------------------------------------------------------------
     elif data.startswith("dyn_manage:"):
         p_id = int(data.split(":")[1])
         btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=%s ORDER BY id ASC", (p_id,), fetchall=True)
@@ -1361,7 +1348,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lvl_name = "মূল বড় কীবোর্ড (Main Keyboard)" if p_id == 0 else f"সাব-মেনু স্তর (Parent: {p_id})"
         await query.edit_message_text(
             f"🎛 **বড় কীবোর্ড বাটন ও সাব-মেনু বিল্ডার**\n📍 অবস্থান: {lvl_name}\n\n"
-            f"যেকোনো বাটনে ক্লিক করে সেটির সাব-বাটন তৈরি করতে পারেন অথবা এক এক করে ডিলিট করতে পারেন:",
+            f"যেকোনো বাটনে ক্লিক করে সেটির সাব-বাটন তৈরি করতে পারেন অথবা ডিলিট করতে পারেন:",
             reply_markup=InlineKeyboardMarkup(kb),
             parse_mode="Markdown"
         )
@@ -1405,9 +1392,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["state"] = "dyn_waiting_title"
         await query.edit_message_text("✍️ নতুন বাটনের নাম লিখে পাঠান (যেমন: 🎁 অফার বা 📚 ভিডিও গাইড):\n(বাতিল করতে /cancel পাঠান)")
 
-    # -------------------------------------------------------------
-    # ওনার কর্তৃক অ্যাডমিন ম্যানেজমেন্ট
-    # -------------------------------------------------------------
     elif data == "owner_manage_admins":
         owner = get_owner_id()
         if not owner or int(user_id) != int(owner):
@@ -1535,9 +1519,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
         )
 
-    # -------------------------------------------------------------
-    # অ্যাডমিন ফাইল হিস্ট্রি ও রিপোর্ট
-    # -------------------------------------------------------------
     elif data.startswith("admin_file_history:"):
         page = int(data.split(":")[1])
         limit = 5
@@ -1646,9 +1627,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.answer("এক্সেল ফাইল পাঠানো হয়েছে!")
 
-    # -------------------------------------------------------------
-    # ধাপ ১: রিসিভ করা এবং বাকি সবার কাছ থেকে ফাইল রিমুভ
-    # -------------------------------------------------------------
     elif data.startswith("sub_s1_open:"):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
@@ -1731,9 +1709,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_reply_markup(reply_markup=kb)
 
-    # -------------------------------------------------------------
-    # ধাপ ১ কনফার্মেশন ও রিজেকশন কারণ উইজার্ড
-    # -------------------------------------------------------------
     elif data.startswith("sub_c1:"):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
@@ -1776,9 +1751,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await finalize_stage1(context, query, sub_id, in_review_emails, [], user_id)
 
-    # -------------------------------------------------------------
-    # ধাপ ৩ চূড়ান্ত কনফার্মেশন ও রিজেকশন কারণ উইজার্ড
-    # -------------------------------------------------------------
     elif data.startswith("sub_s3_open:"):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
@@ -1840,9 +1812,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await finalize_stage3(context, query, sub_id, final_accepted, [], user_id)
 
-    # -------------------------------------------------------------
-    # রিজেকশন কারণ হ্যান্ডলিং
-    # -------------------------------------------------------------
     elif data.startswith("sub_rs_set:"):
         parts = data.split(":")
         stage_num = int(parts[1])
@@ -1917,9 +1886,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text(caption_txt, parse_mode="Markdown")
 
-    # -------------------------------------------------------------
-    # পুরো ফাইল বাতিল
-    # -------------------------------------------------------------
     elif data.startswith("sub_rj_all_prompt:"):
         parts = data.split(":")
         stage_num = int(parts[1])
@@ -1960,9 +1926,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         review_emails = json.loads(sub["in_review_json"])
         await finalize_stage3(context, query, sub_id, review_emails, [], user_id)
 
-    # -------------------------------------------------------------
-    # Withdrawals (ওনার অনুমোদন/বাতিল)
-    # -------------------------------------------------------------
     elif data.startswith("approve_withdraw:"):
         owner = get_owner_id()
         if not owner or int(user_id) != int(owner):
@@ -2012,7 +1975,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# FINALIZATION LOGICS (STAGE 1, 3 & REJECT ALL)
+# FINALIZATION LOGICS
 # =========================================================
 
 async def finalize_stage1(context, query, sub_id, in_review_emails, rejected_items, admin_user_id):
@@ -2195,7 +2158,7 @@ async def finalize_reject_all(context, query, sub_id, rejected_items, admin_user
 
 
 # =========================================================
-# MESSAGE HANDLER (PRIVATE ONLY)
+# MESSAGE HANDLER
 # =========================================================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2216,7 +2179,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     rate = get_config("email_rate", float)
 
-    btn_sell = get_button_title("sell", "📤 SELL FRESH GMAIL ACCOUNT")
+    btn_sell = get_button_title("sell", "📩 SELL FRESH GMAIL ACCOUNT")
     btn_bal = get_button_title("balance", "💰 BALANCE")
     btn_wd = get_button_title("withdraw", "💸 WITHDRAW")
     btn_hist = get_button_title("history", "📜 হিস্ট্রি")
@@ -2229,7 +2192,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
-    # ১. কাস্টম রিজেকশন কারণ টাইপ করে সেভ করা
     if is_admin(user.id) and state == "waiting_custom_reason_text":
         info = context.user_data.get("custom_reason_info")
         flow = context.user_data.get("pending_rejection_flow")
@@ -2280,7 +2242,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop("pending_rejection_flow", None)
         return
 
-    # ২. ডায়নামিক কনফিগ ভ্যালু সেভ করা
     if is_admin(user.id) and state == "waiting_cfg_val":
         cfg_key = context.user_data.get("editing_cfg_key")
         try:
@@ -2295,7 +2256,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ সঠিক সংখ্যায় মান লিখে পাঠান।")
         return
 
-    # রেফার ম্যানুয়ালি যোগ করা
     if is_admin(user.id) and state == "waiting_add_ref_val":
         context.user_data.clear()
         parts = text.split()
@@ -2310,7 +2270,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ ফরম্যাট ভুল! `<user_id> <সংখ্যা>` এভাবে দিন।")
         return
 
-    # ৩. ডায়নামিক বাটন উইজার্ড
     if is_admin(user.id) and state == "dyn_waiting_title":
         context.user_data["dyn_title"] = text
         context.user_data["state"] = "dyn_waiting_content"
@@ -2319,9 +2278,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "এবার এই বাটনের তথ্য পাঠিয়ে দিন:\n\n"
             "🔹 **যদি লিংক দিতে চান:** সরাসরি URL লিখে পাঠান (যেমন: `https://t.me/...`)\n"
             "🔹 **যদি মেসেজ দিতে চান:** মেসেজটি লিখে দিন।\n"
-            "💡 **টিপস (একাধিক মেসেজ):** একাধিক মেসেজ দিতে চাইলে মাঝখানে `---SPLIT---` লিখে দিন!\n\n"
-            "উদাহরণ:\n"
-            "`স্বাগতম আমাদের নিয়মে!---SPLIT---প্রতি জিমেইলে ২৫ টাকা পাবেন।`",
+            "💡 **টিপস:** একাধিক মেসেজ পাঠাতে মাঝখানে `---SPLIT---` লিখুন।",
             parse_mode="Markdown"
         )
         return
@@ -2340,7 +2297,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🎉 **বাটন সফলভাবে তৈরি হয়েছে!**\n\nনাম: {title}\nধরন: {b_type.upper()}", reply_markup=get_bottom_keyboard())
         return
 
-    # ৪. বড় কীবোর্ডের ডায়নামিক বাটন ক্লিক হ্যান্ডলিং
     dyn_btn_row = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=0 AND title=%s", (text,), fetchone=True)
     if dyn_btn_row:
         if dyn_btn_row["btn_type"] == "url":
@@ -2359,7 +2315,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"📂 **{dyn_btn_row['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
         return
 
-    # ৫. ব্রডকাস্ট পোস্ট হ্যান্ডলিং
     if is_admin(user.id) and state == "admin_broadcast":
         clean_bc, bc_kb = parse_text_and_buttons(text)
         users = db_execute("SELECT user_id FROM users", fetchall=True)
@@ -2376,8 +2331,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(chat_id=FORCE_GROUP_CHAT_ID, text=clean_bc, reply_markup=bc_kb, parse_mode="Markdown")
             group_posted = True
-        except Exception as e:
-            print(f"Failed to post broadcast to official group: {e}")
+        except Exception:
+            pass
 
         context.user_data.clear()
         
@@ -2390,7 +2345,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(report_msg, parse_mode="Markdown")
         return
 
-    # ৬. সাপোর্ট বাটন
     if text == btn_sup:
         sup_text = get_custom_msg("support")
         clean_sup, sup_kb = parse_text_and_buttons(sup_text)
@@ -2398,7 +2352,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(clean_sup, reply_markup=(sup_kb or def_kb), parse_mode="Markdown")
         return
 
-    # ৭. ফোর্স জয়েন যাচাই
     if not is_admin(user.id):
         joined = await is_user_joined_all(context.bot, user.id)
         if not joined:
@@ -2408,7 +2361,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # ওনার কর্তৃক অ্যাডমিন নাম এডিট
     owner = get_owner_id()
     if owner and int(user.id) == int(owner) and state == "waiting_helper_new_name":
         target_id = context.user_data.get("target_helper_id")
@@ -2436,7 +2388,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}", reply_markup=get_bottom_keyboard())
         return
 
-    # হিস্ট্রি বাটন
     if text == btn_hist:
         hist_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
@@ -2451,7 +2402,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if text == btn_sell:
+    # সেল ফ্রেশ জিমেইল বাটন হ্যান্ডলিং (নাম বা ইমোজির সব রকম ভেরিয়েশন সাপোর্ট)
+    if text == btn_sell or "SELL FRESH GMAIL ACCOUNT" in text:
         count = get_today_file_count(user.id)
         d_lim = get_config("daily_file_limit", int)
         e_lim = get_config("max_emails_per_file", int)
@@ -2641,7 +2593,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         return
 
-    # ফাইল সাবমিট প্রসেসিং
     if state == "waiting_file":
         doc = update.message.document
         if not doc:
@@ -2837,7 +2788,7 @@ def main():
     
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler))
 
-    print("Gmail Sell Bot is running safely in private chat mode with Supabase Cloud DB...")
+    print("Optimized Supabase Gmail Sell Bot is running...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
