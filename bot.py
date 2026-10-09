@@ -4,12 +4,13 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import threading
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import openpyxl
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -36,10 +37,13 @@ if not BOT_TOKEN:
 
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "mysecretadmin123")
 
-# আপনার স্থায়ী টেলিগ্রাম ওনার আইডি (কখনোই নষ্ট হবে না)
+# স্থায়ী টেলিগ্রাম ওনার আইডি
 HARDCODED_OWNER_ID = 8919985167
 
-DB_NAME = "bot.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set.")
+
 PORT = int(os.environ.get("PORT", 10000))
 
 # অফিসিয়াল গ্রুপ (যেখানে ব্রডকাস্ট পোস্ট হবে)
@@ -78,47 +82,58 @@ def run_web_server():
 
 
 # =========================================================
-# DATABASE & SCHEMA
+# POSTGRESQL DATABASE & SCHEMA (SUPABASE)
 # =========================================================
 
-db = sqlite3.connect(DB_NAME, check_same_thread=False)
-db.row_factory = sqlite3.Row
+db_lock = threading.Lock()
+pg_conn = None
 
+def get_db_connection():
+    global pg_conn
+    if pg_conn is None or pg_conn.closed != 0:
+        pg_conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        pg_conn.autocommit = True
+    return pg_conn
 
 def db_execute(query, params=(), fetchone=False, fetchall=False):
-    cur = db.cursor()
-    cur.execute(query, params)
-    db.commit()
-    if fetchone:
-        return cur.fetchone()
-    if fetchall:
-        return cur.fetchall()
-    return None
-
+    global pg_conn
+    with db_lock:
+        pg_query = query.replace("?", "%s")
+        for _ in range(3):
+            try:
+                conn = get_db_connection()
+                with conn.cursor() as cur:
+                    cur.execute(pg_query, params)
+                    if fetchone:
+                        return cur.fetchone()
+                    if fetchall:
+                        return cur.fetchall()
+                    return None
+            except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                pg_conn = None
+            except Exception as e:
+                print(f"Database error: {e}")
+                raise e
+        return None
 
 def init_db():
     db_execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY,
             username TEXT,
-            balance REAL DEFAULT 0,
+            balance DOUBLE PRECISION DEFAULT 0,
             manual_ref_count INTEGER DEFAULT 0,
             files_today INTEGER DEFAULT 0,
             last_file_date TEXT,
-            referred_by INTEGER DEFAULT NULL,
+            referred_by BIGINT DEFAULT NULL,
             seen_rules INTEGER DEFAULT 0,
             created_at TEXT
         )
     """)
 
-    try:
-        db_execute("ALTER TABLE users ADD COLUMN manual_ref_count INTEGER DEFAULT 0")
-    except Exception:
-        pass
-
     db_execute("""
         CREATE TABLE IF NOT EXISTS dynamic_buttons (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             parent_id INTEGER DEFAULT 0,
             title TEXT NOT NULL,
             btn_type TEXT NOT NULL,
@@ -129,11 +144,11 @@ def init_db():
 
     db_execute("""
         CREATE TABLE IF NOT EXISTS withdrawals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            amount REAL,
-            fee REAL,
-            receive_amount REAL,
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            amount DOUBLE PRECISION,
+            fee DOUBLE PRECISION,
+            receive_amount DOUBLE PRECISION,
             method TEXT,
             account TEXT,
             status TEXT DEFAULT 'pending',
@@ -143,8 +158,8 @@ def init_db():
 
     db_execute("""
         CREATE TABLE IF NOT EXISTS submissions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
             file_id TEXT,
             emails_json TEXT,
             in_review_json TEXT DEFAULT '[]',
@@ -159,8 +174,8 @@ def init_db():
     db_execute("""
         CREATE TABLE IF NOT EXISTS submission_admin_messages (
             sub_id INTEGER,
-            admin_id INTEGER,
-            message_id INTEGER
+            admin_id BIGINT,
+            message_id BIGINT
         )
     """)
 
@@ -173,7 +188,7 @@ def init_db():
 
     db_execute("""
         CREATE TABLE IF NOT EXISTS helpers (
-            user_id INTEGER PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY,
             admin_name TEXT DEFAULT 'Admin',
             added_at TEXT
         )
@@ -205,7 +220,7 @@ CONFIG_DEFAULTS = {
 
 
 def get_config(key, as_type=float):
-    res = db_execute("SELECT value FROM settings WHERE key=?", (key,), fetchone=True)
+    res = db_execute("SELECT value FROM settings WHERE key=%s", (key,), fetchone=True)
     val = res["value"] if res else CONFIG_DEFAULTS.get(key, "0")
     try:
         return as_type(val)
@@ -215,8 +230,8 @@ def get_config(key, as_type=float):
 
 def set_config(key, val):
     db_execute("""
-        INSERT INTO settings (key, value) VALUES (?, ?)
-        ON CONFLICT(key) DO UPDATE SET value=excluded.value
+        INSERT INTO settings (key, value) VALUES (%s, %s)
+        ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value
     """, (key, str(val)))
 
 
@@ -268,14 +283,14 @@ def get_owner_id():
 def is_admin(user_id):
     if int(user_id) == HARDCODED_OWNER_ID:
         return True
-    helper = db_execute("SELECT user_id FROM helpers WHERE user_id=?", (user_id,), fetchone=True)
+    helper = db_execute("SELECT user_id FROM helpers WHERE user_id=%s", (user_id,), fetchone=True)
     return helper is not None
 
 
 def get_admin_name(user_id):
     if int(user_id) == HARDCODED_OWNER_ID:
         return "👑 Owner"
-    helper = db_execute("SELECT admin_name FROM helpers WHERE user_id=?", (user_id,), fetchone=True)
+    helper = db_execute("SELECT admin_name FROM helpers WHERE user_id=%s", (user_id,), fetchone=True)
     if helper and helper["admin_name"]:
         return helper["admin_name"]
     return f"Admin ({user_id})"
@@ -283,23 +298,23 @@ def get_admin_name(user_id):
 
 def add_helper(user_id, name="Admin"):
     db_execute("""
-        INSERT INTO helpers (user_id, admin_name, added_at) VALUES (?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET admin_name=excluded.admin_name
+        INSERT INTO helpers (user_id, admin_name, added_at) VALUES (%s, %s, %s)
+        ON CONFLICT(user_id) DO UPDATE SET admin_name=EXCLUDED.admin_name
     """, (user_id, name, datetime.now().isoformat()))
 
 
 def remove_helper(user_id):
-    db_execute("DELETE FROM helpers WHERE user_id=?", (user_id,))
+    db_execute("DELETE FROM helpers WHERE user_id=%s", (user_id,))
 
 
 def set_helper_name(user_id, name):
-    db_execute("UPDATE helpers SET admin_name=? WHERE user_id=?", (name, user_id))
+    db_execute("UPDATE helpers SET admin_name=%s WHERE user_id=%s", (name, user_id))
 
 
 def get_all_admins():
     owner = HARDCODED_OWNER_ID
     helpers = db_execute("SELECT user_id, admin_name FROM helpers", fetchall=True)
-    return owner, helpers
+    return owner, (helpers or [])
 
 
 async def notify_all_admins(context, message, exclude_user_id=None):
@@ -418,7 +433,7 @@ MESSAGE_NAMES = {
 
 
 def get_custom_msg(key):
-    res = db_execute("SELECT value FROM settings WHERE key=?", (f"msg_{key}",), fetchone=True)
+    res = db_execute("SELECT value FROM settings WHERE key=%s", (f"msg_{key}",), fetchone=True)
     rate = get_config("email_rate", float)
     d_lim = get_config("daily_file_limit", int)
     e_lim = get_config("max_emails_per_file", int)
@@ -438,11 +453,11 @@ def set_custom_msg(key, text):
 
 
 def delete_custom_msg(key):
-    db_execute("DELETE FROM settings WHERE key=?", (f"msg_{key}",))
+    db_execute("DELETE FROM settings WHERE key=%s", (f"msg_{key}",))
 
 
 def get_button_title(btn_key, default_title):
-    res = db_execute("SELECT value FROM settings WHERE key=?", (f"btn_{btn_key}",), fetchone=True)
+    res = db_execute("SELECT value FROM settings WHERE key=%s", (f"btn_{btn_key}",), fetchone=True)
     return res["value"] if res else default_title
 
 
@@ -464,29 +479,28 @@ def clear_junk_cache():
                     deleted_files += 1
             except Exception:
                 pass
-    db_execute("VACUUM")
     return deleted_files
 
 
 def add_user(user, referrer_id=None):
-    existing = db_execute("SELECT * FROM users WHERE user_id=?", (user.id,), fetchone=True)
+    existing = db_execute("SELECT * FROM users WHERE user_id=%s", (user.id,), fetchone=True)
     if not existing:
         db_execute("""
             INSERT INTO users (user_id, username, balance, manual_ref_count, files_today, last_file_date, referred_by, seen_rules, created_at)
-            VALUES (?, ?, 0, 0, 0, ?, ?, 0, ?)
+            VALUES (%s, %s, 0, 0, 0, %s, %s, 0, %s)
         """, (user.id, user.username or "", datetime.now().strftime("%Y-%m-%d"), referrer_id, datetime.now().isoformat()))
         return True
     else:
-        db_execute("UPDATE users SET username=? WHERE user_id=?", (user.username or "", user.id))
+        db_execute("UPDATE users SET username=%s WHERE user_id=%s", (user.username or "", user.id))
         return False
 
 
 def get_user(user_id):
-    return db_execute("SELECT * FROM users WHERE user_id=?", (user_id,), fetchone=True)
+    return db_execute("SELECT * FROM users WHERE user_id=%s", (user_id,), fetchone=True)
 
 
 def mark_rules_seen(user_id):
-    db_execute("UPDATE users SET seen_rules=1 WHERE user_id=?", (user_id,))
+    db_execute("UPDATE users SET seen_rules=1 WHERE user_id=%s", (user_id,))
 
 
 def get_balance(user_id):
@@ -495,26 +509,26 @@ def get_balance(user_id):
 
 
 def update_balance(user_id, amount):
-    db_execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (amount, user_id))
+    db_execute("UPDATE users SET balance = balance + %s WHERE user_id=%s", (amount, user_id))
 
 
 def get_referral_count(user_id):
     u = get_user(user_id)
-    manual = int(u["manual_ref_count"]) if (u and u["manual_ref_count"]) else 0
-    res = db_execute("SELECT COUNT(*) AS c FROM users WHERE referred_by=?", (user_id,), fetchone=True)
+    manual = int(u["manual_ref_count"]) if (u and u.get("manual_ref_count")) else 0
+    res = db_execute("SELECT COUNT(*) AS c FROM users WHERE referred_by=%s", (user_id,), fetchone=True)
     organic = res["c"] if res else 0
     return organic + manual
 
 
 def add_manual_referral(user_id, count):
-    db_execute("UPDATE users SET manual_ref_count = manual_ref_count + ? WHERE user_id=?", (count, user_id))
+    db_execute("UPDATE users SET manual_ref_count = manual_ref_count + %s WHERE user_id=%s", (count, user_id))
 
 
 def get_referral_details(user_id):
     return db_execute("""
         SELECT user_id, username, created_at 
         FROM users 
-        WHERE referred_by=? 
+        WHERE referred_by=%s 
         ORDER BY created_at DESC
     """, (user_id,), fetchall=True)
 
@@ -523,11 +537,11 @@ def get_top_referrers(limit=25):
     return db_execute(f"""
         SELECT u.user_id, u.username, u.manual_ref_count,
                COUNT(r.user_id) as organic_count,
-               (COUNT(r.user_id) + u.manual_ref_count) as total_refs
+               (COUNT(r.user_id) + COALESCE(u.manual_ref_count, 0)) as total_refs
         FROM users u
         LEFT JOIN users r ON u.user_id = r.referred_by
-        GROUP BY u.user_id
-        HAVING total_refs > 0
+        GROUP BY u.user_id, u.username, u.manual_ref_count
+        HAVING (COUNT(r.user_id) + COALESCE(u.manual_ref_count, 0)) > 0
         ORDER BY total_refs DESC
         LIMIT {limit}
     """, fetchall=True)
@@ -543,14 +557,14 @@ def get_today_file_count(user_id):
     if not user:
         return 0
     if user["last_file_date"] != today:
-        db_execute("UPDATE users SET files_today=0, last_file_date=? WHERE user_id=?", (today, user_id))
+        db_execute("UPDATE users SET files_today=0, last_file_date=%s WHERE user_id=%s", (today, user_id))
         return 0
     return user["files_today"]
 
 
 def increase_file_count(user_id):
     today = datetime.now().strftime("%Y-%m-%d")
-    db_execute("UPDATE users SET files_today = files_today + 1, last_file_date = ? WHERE user_id=?", (today, user_id))
+    db_execute("UPDATE users SET files_today = files_today + 1, last_file_date = %s WHERE user_id=%s", (today, user_id))
 
 
 # =========================================================
@@ -640,10 +654,10 @@ def validate_gmail_file(file_path):
 def check_recent_duplicate_emails(emails):
     cd_days = get_config("duplicate_check_days", int)
     cutoff_date = (datetime.now() - timedelta(days=cd_days)).isoformat()
-    placeholders = ",".join(["?"] * len(emails))
+    placeholders = ",".join(["%s"] * len(emails))
     query = f"""
         SELECT email FROM submitted_emails 
-        WHERE email IN ({placeholders}) AND submitted_at >= ?
+        WHERE email IN ({placeholders}) AND submitted_at >= %s
     """
     params = list(emails) + [cutoff_date]
     rows = db_execute(query, params, fetchall=True)
@@ -654,9 +668,10 @@ def check_recent_duplicate_emails(emails):
 
 def save_submitted_emails(emails):
     now_str = datetime.now().isoformat()
-    cur = db.cursor()
-    cur.executemany("INSERT INTO submitted_emails (email, submitted_at) VALUES (?, ?)", [(e, now_str) for e in emails])
-    db.commit()
+    with db_lock:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.executemany("INSERT INTO submitted_emails (email, submitted_at) VALUES (%s, %s)", [(e, now_str) for e in emails])
 
 
 # =========================================================
@@ -694,7 +709,7 @@ def get_bottom_keyboard():
 
 
 def build_dynamic_sub_markup(parent_id):
-    btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=? ORDER BY id ASC", (parent_id,), fetchall=True)
+    btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=%s ORDER BY id ASC", (parent_id,), fetchall=True)
     if not btns:
         return None
 
@@ -970,7 +985,7 @@ async def reset_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ ইউজার পাওয়া যায়নি।")
         return
 
-    db_execute("UPDATE users SET balance=0 WHERE user_id=?", (t_id,))
+    db_execute("UPDATE users SET balance=0 WHERE user_id=%s", (t_id,))
     await update.message.reply_text(f"🔄 ব্যালেন্স রিসেট সফল! ইউজার: {t_id}, ব্যালেন্স: ৳0.00")
 
 
@@ -1080,7 +1095,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ২. ডায়নামিক সাব-বাটন ও মাল্টিপল মেসেজ ক্লিক
     if data.startswith("dyn_click:"):
         btn_id = int(data.split(":")[1])
-        btn = db_execute("SELECT * FROM dynamic_buttons WHERE id=?", (btn_id,), fetchone=True)
+        btn = db_execute("SELECT * FROM dynamic_buttons WHERE id=%s", (btn_id,), fetchone=True)
         if not btn:
             await query.answer("বাটন পাওয়া যায়নি!")
             return
@@ -1100,7 +1115,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ৩. ইউজারের সাবমিশন হিস্ট্রি দেখা
     if data == "user_hist_live":
         subs = db_execute(
-            "SELECT * FROM submissions WHERE user_id=? AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
+            "SELECT * FROM submissions WHERE user_id=%s AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
             (user_id,), 
             fetchall=True
         )
@@ -1130,7 +1145,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data == "user_hist_all":
-        subs = db_execute("SELECT * FROM submissions WHERE user_id=? ORDER BY id DESC LIMIT 15", (user_id,), fetchall=True)
+        subs = db_execute("SELECT * FROM submissions WHERE user_id=%s ORDER BY id DESC LIMIT 15", (user_id,), fetchall=True)
         if not subs:
             back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
             await query.edit_message_text("📜 আপনি এখনও কোনো ফাইল সাবমিট করেননি।", reply_markup=back_kb)
@@ -1185,7 +1200,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_admin_panel(query, user_id)
 
     # -------------------------------------------------------------
-    # পেন্ডিং ফাইল ম্যানেজার (হারিয়ে যাওয়া ফাইল কন্ট্রোল)
+    # পেন্ডিং ফাইল ম্যানেজার
     # -------------------------------------------------------------
     elif data == "admin_pending_files":
         subs = db_execute("SELECT * FROM submissions WHERE status IN ('pending', 'stage2_review') ORDER BY id DESC LIMIT 15", fetchall=True)
@@ -1203,7 +1218,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("adm_open_sub_review:"):
         sub_id = int(data.split(":")[1])
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not sub:
             await query.answer("ফাইল পাওয়া যায়নি!")
             return
@@ -1327,7 +1342,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # -------------------------------------------------------------
     elif data.startswith("dyn_manage:"):
         p_id = int(data.split(":")[1])
-        btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=? ORDER BY id ASC", (p_id,), fetchall=True)
+        btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=%s ORDER BY id ASC", (p_id,), fetchall=True)
 
         kb = []
         if btns:
@@ -1337,7 +1352,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         kb.append([InlineKeyboardButton("➕ নতুন বাটন যোগ করুন (বড় কীবোর্ড)", callback_data=f"dyn_add_init:{p_id}")])
         if p_id != 0:
-            parent_row = db_execute("SELECT parent_id FROM dynamic_buttons WHERE id=?", (p_id,), fetchone=True)
+            parent_row = db_execute("SELECT parent_id FROM dynamic_buttons WHERE id=%s", (p_id,), fetchone=True)
             prev_p = parent_row["parent_id"] if parent_row else 0
             kb.append([InlineKeyboardButton("⬅️ আগের মেনুতে ফিরুন", callback_data=f"dyn_manage:{prev_p}")])
         else:
@@ -1353,7 +1368,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("dyn_item_opts:"):
         b_id = int(data.split(":")[1])
-        b = db_execute("SELECT * FROM dynamic_buttons WHERE id=?", (b_id,), fetchone=True)
+        b = db_execute("SELECT * FROM dynamic_buttons WHERE id=%s", (b_id,), fetchone=True)
         if not b:
             await query.answer("বাটন পাওয়া যায়নি!")
             return
@@ -1376,10 +1391,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("dyn_del_one:"):
         b_id = int(data.split(":")[1])
-        b = db_execute("SELECT * FROM dynamic_buttons WHERE id=?", (b_id,), fetchone=True)
+        b = db_execute("SELECT * FROM dynamic_buttons WHERE id=%s", (b_id,), fetchone=True)
         if b:
             parent_id = b["parent_id"]
-            db_execute("DELETE FROM dynamic_buttons WHERE id=?", (b_id,))
+            db_execute("DELETE FROM dynamic_buttons WHERE id=%s", (b_id,))
             await query.answer("বাটনটি সফলভাবে ডিলিট করা হয়েছে!", show_alert=True)
             query.data = f"dyn_manage:{parent_id}"
             await button_handler(update, context)
@@ -1527,7 +1542,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         page = int(data.split(":")[1])
         limit = 5
         offset = page * limit
-        subs = db_execute("SELECT * FROM submissions ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset), fetchall=True)
+        subs = db_execute("SELECT * FROM submissions ORDER BY id DESC LIMIT %s OFFSET %s", (limit, offset), fetchall=True)
         total_subs = db_execute("SELECT COUNT(*) AS c FROM submissions", fetchone=True)["c"]
 
         if not subs:
@@ -1555,7 +1570,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("adm_view_sub:"):
         sub_id = int(data.split(":")[1])
-        s = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        s = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not s:
             await query.answer("ফাইল পাওয়া যায়নি!")
             return
@@ -1598,14 +1613,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("adm_del_sub:"):
         sub_id = int(data.split(":")[1])
-        db_execute("DELETE FROM submissions WHERE id=?", (sub_id,))
+        db_execute("DELETE FROM submissions WHERE id=%s", (sub_id,))
         await query.answer("ফাইলটি সফলভাবে ডিলিট করা হয়েছে!", show_alert=True)
         query.data = "admin_file_history:0"
         await button_handler(update, context)
 
     elif data.startswith("adm_dl_excel:"):
         sub_id = int(data.split(":")[1])
-        s = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        s = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not s:
             await query.answer("ফাইল পাওয়া যায়নি!")
             return
@@ -1636,7 +1651,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # -------------------------------------------------------------
     elif data.startswith("sub_s1_open:"):
         sub_id = int(data.split(":")[1])
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not sub or sub["status"] != "pending":
             await query.answer("ফাইলটি অলরেডি অন্য একজন প্রসেস করছেন!", show_alert=True)
             return
@@ -1647,7 +1662,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(f"⚠️ এই ফাইলটি অলরেডি {sub['handled_by']} রিসিভ করেছেন!", show_alert=True)
             return
 
-        db_execute("UPDATE submissions SET handled_by=? WHERE id=?", (rec_name, sub_id))
+        db_execute("UPDATE submissions SET handled_by=%s WHERE id=%s", (rec_name, sub_id))
 
         team_msg = (
             f"📢 **টিম আপডেট (#Submission_{sub_id})**\n\n"
@@ -1657,15 +1672,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await notify_all_admins(context, team_msg, exclude_user_id=user_id)
 
-        other_msgs = db_execute("SELECT admin_id, message_id FROM submission_admin_messages WHERE sub_id=?", (sub_id,), fetchall=True)
-        for om in other_msgs:
-            if int(om["admin_id"]) != int(user_id):
-                try:
-                    await context.bot.delete_message(chat_id=int(om["admin_id"]), message_id=int(om["message_id"]))
-                except Exception:
-                    pass
+        other_msgs = db_execute("SELECT admin_id, message_id FROM submission_admin_messages WHERE sub_id=%s", (sub_id,), fetchall=True)
+        if other_msgs:
+            for om in other_msgs:
+                if int(om["admin_id"]) != int(user_id):
+                    try:
+                        await context.bot.delete_message(chat_id=int(om["admin_id"]), message_id=int(om["message_id"]))
+                    except Exception:
+                        pass
 
-        db_execute("DELETE FROM submission_admin_messages WHERE sub_id=?", (sub_id,))
+        db_execute("DELETE FROM submission_admin_messages WHERE sub_id=%s", (sub_id,))
 
         emails = json.loads(sub["emails_json"])
         if sub_id not in admin_stage1_selections:
@@ -1690,7 +1706,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sub_id = int(parts[2])
         idx = int(parts[3])
 
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not sub:
             return
 
@@ -1720,7 +1736,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # -------------------------------------------------------------
     elif data.startswith("sub_c1:"):
         sub_id = int(data.split(":")[1])
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not sub or sub["status"] != "pending":
             return
 
@@ -1765,7 +1781,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # -------------------------------------------------------------
     elif data.startswith("sub_s3_open:"):
         sub_id = int(data.split(":")[1])
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not sub or sub["status"] != "stage2_review":
             await query.answer("Already processed.", show_alert=True)
             return
@@ -1788,7 +1804,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("sub_c3:"):
         sub_id = int(data.split(":")[1])
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not sub or sub["status"] != "stage2_review":
             return
 
@@ -1825,7 +1841,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await finalize_stage3(context, query, sub_id, final_accepted, [], user_id)
 
     # -------------------------------------------------------------
-    # রিজেকশন কারণ হ্যান্ডলিং (ভেরিফিকেশন প্রবলেম সহ)
+    # রিজেকশন কারণ হ্যান্ডলিং
     # -------------------------------------------------------------
     elif data.startswith("sub_rs_set:"):
         parts = data.split(":")
@@ -1908,7 +1924,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = data.split(":")
         stage_num = int(parts[1])
         sub_id = int(parts[2])
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not sub:
             return
 
@@ -1937,7 +1953,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("sub_accept_all_s3:"):
         sub_id = int(data.split(":")[1])
-        sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+        sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not sub or sub["status"] != "stage2_review":
             return
 
@@ -1945,7 +1961,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await finalize_stage3(context, query, sub_id, review_emails, [], user_id)
 
     # -------------------------------------------------------------
-    # Withdrawals (শুধুমাত্র ওনারের জন্য অনুমোদন/বাতিল)
+    # Withdrawals (ওনার অনুমোদন/বাতিল)
     # -------------------------------------------------------------
     elif data.startswith("approve_withdraw:"):
         owner = get_owner_id()
@@ -1954,16 +1970,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         w_id = int(data.split(":")[1])
-        w = db_execute("SELECT * FROM withdrawals WHERE id=?", (w_id,), fetchone=True)
+        w = db_execute("SELECT * FROM withdrawals WHERE id=%s", (w_id,), fetchone=True)
         if not w or w["status"] != "pending":
             return
         bal = get_balance(w["user_id"])
         if bal < float(w["amount"]):
-            db_execute("UPDATE withdrawals SET status='rejected' WHERE id=?", (w_id,))
+            db_execute("UPDATE withdrawals SET status='rejected' WHERE id=%s", (w_id,))
             await query.edit_message_text("❌ পর্যাপ্ত ব্যালেন্স না থাকায় রিজেক্ট করা হলো।")
             return
         update_balance(w["user_id"], -float(w["amount"]))
-        db_execute("UPDATE withdrawals SET status='approved' WHERE id=?", (w_id,))
+        db_execute("UPDATE withdrawals SET status='approved' WHERE id=%s", (w_id,))
         u_rate = get_config("usdt_rate", float)
         rec_bdt = float(w['receive_amount'])
         rec_usdt = rec_bdt / u_rate if u_rate > 0 else 0
@@ -1984,10 +2000,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         w_id = int(data.split(":")[1])
-        w = db_execute("SELECT * FROM withdrawals WHERE id=?", (w_id,), fetchone=True)
+        w = db_execute("SELECT * FROM withdrawals WHERE id=%s", (w_id,), fetchone=True)
         if not w or w["status"] != "pending":
             return
-        db_execute("UPDATE withdrawals SET status='rejected' WHERE id=?", (w_id,))
+        db_execute("UPDATE withdrawals SET status='rejected' WHERE id=%s", (w_id,))
         await query.edit_message_text(f"❌ Withdrawal #{w_id} Rejected.")
         try:
             await context.bot.send_message(chat_id=w["user_id"], text=f"❌ উইথড্রয়াল রিকোয়েস্ট (৳{w['amount']:.2f}) বাতিল করা হয়েছে।")
@@ -2000,12 +2016,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================================================
 
 async def finalize_stage1(context, query, sub_id, in_review_emails, rejected_items, admin_user_id):
-    sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+    sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
     rate = get_config("email_rate", float)
     db_execute("""
         UPDATE submissions 
-        SET status='stage2_review', in_review_json=?, rejected_count=?
-        WHERE id=?
+        SET status='stage2_review', in_review_json=%s, rejected_count=%s
+        WHERE id=%s
     """, (json.dumps(in_review_emails), len(rejected_items), sub_id))
 
     admin_stage1_selections.pop(sub_id, None)
@@ -2064,7 +2080,7 @@ async def finalize_stage1(context, query, sub_id, in_review_emails, rejected_ite
 
 
 async def finalize_stage3(context, query, sub_id, accepted_emails, rejected_items, admin_user_id):
-    sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+    sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
     rate = get_config("email_rate", float)
     total_acc = len(accepted_emails)
     total_rej = sub["rejected_count"] + len(rejected_items)
@@ -2072,8 +2088,8 @@ async def finalize_stage3(context, query, sub_id, accepted_emails, rejected_item
 
     db_execute("""
         UPDATE submissions 
-        SET status='completed', accepted_count=?, rejected_count=?
-        WHERE id=?
+        SET status='completed', accepted_count=%s, rejected_count=%s
+        WHERE id=%s
     """, (total_acc, total_rej, sub_id))
 
     if total_acc > 0:
@@ -2138,11 +2154,11 @@ async def finalize_stage3(context, query, sub_id, accepted_emails, rejected_item
 
 
 async def finalize_reject_all(context, query, sub_id, rejected_items, admin_user_id):
-    sub = db_execute("SELECT * FROM submissions WHERE id=?", (sub_id,), fetchone=True)
+    sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
     admin_name = get_admin_name(admin_user_id)
     total_rej = len(rejected_items)
 
-    db_execute("UPDATE submissions SET status='rejected', accepted_count=0, rejected_count=? WHERE id=?", (total_rej, sub_id))
+    db_execute("UPDATE submissions SET status='rejected', accepted_count=0, rejected_count=%s WHERE id=%s", (total_rej, sub_id))
 
     team_msg = (
         f"❌ **টিম অ্যালার্ট: ফাইল বাতিল করা হয়েছে! (#Submission_{sub_id})**\n\n"
@@ -2213,7 +2229,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
-    # ১. কাস্টম রিজেকশন কারণ টাইপ করে সেভ করা (নো স্টাক ফিক্স)
+    # ১. কাস্টম রিজেকশন কারণ টাইপ করে সেভ করা
     if is_admin(user.id) and state == "waiting_custom_reason_text":
         info = context.user_data.get("custom_reason_info")
         flow = context.user_data.get("pending_rejection_flow")
@@ -2317,7 +2333,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         b_type = "url" if text.startswith(("http://", "https://", "tg://")) else "message"
 
         db_execute(
-            "INSERT INTO dynamic_buttons (parent_id, title, btn_type, content, show_in_reply) VALUES (?, ?, ?, ?, 1)",
+            "INSERT INTO dynamic_buttons (parent_id, title, btn_type, content, show_in_reply) VALUES (%s, %s, %s, %s, 1)",
             (parent_id, title, b_type, text)
         )
         context.user_data.clear()
@@ -2325,7 +2341,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ৪. বড় কীবোর্ডের ডায়নামিক বাটন ক্লিক হ্যান্ডলিং
-    dyn_btn_row = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=0 AND title=?", (text,), fetchone=True)
+    dyn_btn_row = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=0 AND title=%s", (text,), fetchone=True)
     if dyn_btn_row:
         if dyn_btn_row["btn_type"] == "url":
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 ওপেন করুন", url=dyn_btn_row["content"])]])
@@ -2343,17 +2359,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"📂 **{dyn_btn_row['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
         return
 
-    # ৫. ব্রডকাস্ট পোস্ট হ্যান্ডলিং (স্মার্ট বাটন পার্সার সহ)
+    # ৫. ব্রডকাস্ট পোস্ট হ্যান্ডলিং
     if is_admin(user.id) and state == "admin_broadcast":
         clean_bc, bc_kb = parse_text_and_buttons(text)
         users = db_execute("SELECT user_id FROM users", fetchall=True)
         user_count = 0
-        for u in users:
-            try:
-                await context.bot.send_message(chat_id=u["user_id"], text=clean_bc, reply_markup=bc_kb, parse_mode="Markdown")
-                user_count += 1
-            except Exception:
-                pass
+        if users:
+            for u in users:
+                try:
+                    await context.bot.send_message(chat_id=u["user_id"], text=clean_bc, reply_markup=bc_kb, parse_mode="Markdown")
+                    user_count += 1
+                except Exception:
+                    pass
 
         group_posted = False
         try:
@@ -2366,7 +2383,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         report_msg = (
             f"📢 **ব্রডকাস্ট সম্পন্ন হয়েছে!**\n\n"
-            f"👤 ইউজার ইনবক্সে পৌঁছেছে: {user_count}/{len(users)} জনের কাছে\n"
+            f"👤 ইউজার ইনবক্সে পৌঁছেছে: {user_count}/{len(users) if users else 0} জনের কাছে\n"
             f"👥 অফিসিয়াল গ্রুপে পোস্ট: {'✅ সফল' if group_posted else '❌ ব্যর্থ'}\n"
             f"📢 পেমেন্ট প্রুফ চ্যানেল: 🚫 বাদ রাখা হয়েছে"
         )
@@ -2591,10 +2608,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db_execute("""
             INSERT INTO withdrawals (user_id, amount, fee, receive_amount, method, account, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+            VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s)
         """, (user.id, amt, fee, rec, method, text, datetime.now().isoformat()))
 
-        w_id = db_execute("SELECT last_insert_rowid() AS id", fetchone=True)["id"]
+        last_w = db_execute("SELECT id FROM withdrawals WHERE user_id=%s ORDER BY id DESC LIMIT 1", (user.id,), fetchone=True)
+        w_id = last_w["id"] if last_w else 1
         context.user_data.clear()
 
         await update.message.reply_text(f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: {text}\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)")
@@ -2679,10 +2697,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         emails_json = json.dumps(valid_emails)
         db_execute("""
             INSERT INTO submissions (user_id, file_id, emails_json, status, created_at)
-            VALUES (?, ?, ?, 'pending', ?)
+            VALUES (%s, %s, %s, 'pending', %s)
         """, (user.id, doc.file_id, emails_json, datetime.now().isoformat()))
 
-        sub_id = db_execute("SELECT last_insert_rowid() AS id", fetchone=True)["id"]
+        last_sub = db_execute("SELECT id FROM submissions WHERE user_id=%s ORDER BY id DESC LIMIT 1", (user.id,), fetchone=True)
+        sub_id = last_sub["id"] if last_sub else 1
         increase_file_count(user.id)
         context.user_data.clear()
 
@@ -2729,7 +2748,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=admin_kb
                 )
                 db_execute(
-                    "INSERT INTO submission_admin_messages (sub_id, admin_id, message_id) VALUES (?, ?, ?)",
+                    "INSERT INTO submission_admin_messages (sub_id, admin_id, message_id) VALUES (%s, %s, %s)",
                     (sub_id, int(a_id), sent_msg.message_id)
                 )
             except Exception:
@@ -2776,7 +2795,7 @@ async def refinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_c = get_referral_count(target_id)
 
     res_text = f"📊 **রেফারেল হিস্ট্রি:** `{target_id}`\n"
-    res_text += f"মোট রেফার: **{total_c}** (অর্গানিক: {len(refs)}, ম্যানুয়াল: {u['manual_ref_count']})\n\n"
+    res_text += f"মোট রেফার: **{total_c}** (অর্গানিক: {len(refs) if refs else 0}, ম্যানুয়াল: {u.get('manual_ref_count', 0)})\n\n"
 
     if not refs:
         res_text += "ℹ️ অর্গানিক কোনো ইউজার এখনো তার লিংকে জয়েন করেনি।"
@@ -2818,7 +2837,7 @@ def main():
     
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler))
 
-    print("Gmail Sell Bot is running safely in private chat mode...")
+    print("Gmail Sell Bot is running safely in private chat mode with Supabase Cloud DB...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
