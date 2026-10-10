@@ -6,7 +6,6 @@ import re
 import shutil
 import threading
 from datetime import datetime, timedelta
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import openpyxl
 import psycopg2
@@ -38,7 +37,6 @@ if not BOT_TOKEN:
 
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "mysecretadmin123")
 
-# স্থায়ী টেলিগ্রাম ওনার আইডি
 HARDCODED_OWNER_ID = 8919985167
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -46,40 +44,16 @@ if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable is not set.")
 
 PORT = int(os.environ.get("PORT", 10000))
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 
-# অফিসিয়াল গ্রুপ
+# অফিসিয়াল গ্রুপ ও চ্যানেল
 FORCE_GROUP_CHAT_ID = -1004471047712
 FORCE_GROUP_LINK = "https://t.me/+rVP6CkmqrnFlNzA1"
 
-# পেমেন্ট প্রুফ চ্যানেল
 FORCE_CHANNEL_CHAT_ID = -1003991468184
 FORCE_CHANNEL_LINK = "https://t.me/fast_payment_proof_chanel"
 
 SUPPORT_URL = "https://t.me/Talha_juba098"
-
-
-# =========================================================
-# RENDER WEB SERVER
-# =========================================================
-
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"Telegram bot is running.")
-
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-
-    def log_message(self, format, *args):
-        return
-
-
-def run_web_server():
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), HealthHandler)
-    server.serve_forever()
 
 
 # =========================================================
@@ -338,7 +312,7 @@ def get_all_admins():
 
 async def notify_all_admins(context, message, exclude_user_id=None):
     owner, helpers = get_all_admins()
-    admin_list = [owner]
+    admin_list = [int(owner)]
 
     for h in helpers:
         try:
@@ -358,8 +332,8 @@ async def notify_all_admins(context, message, exclude_user_id=None):
                 text=message, 
                 parse_mode="Markdown"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Failed to notify admin {a_id}: {e}")
 
 
 def is_maintenance_mode():
@@ -414,18 +388,35 @@ DEFAULT_MESSAGES = {
     ),
     "rules": (
         "📜 **আমাদের কাজের নিয়মাবলী ও শর্তাবলী:**\n\n"
-        "১. ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই সম্পন্ন করবেন।\n"
-        "২. সমস্যা থাকা জিমেইল ১ম ধাপেই নির্দিষ্ট কারণসহ বাতিল ও এক্সেল ফাইলে ফেরত যাবে।\n"
-        "৩. নির্বাচিত জিমেইলগুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণে থাকবে।\n"
-        "৪. পর্যবেক্ষণ শেষে সঠিক প্রতি জিমেইলে ৳{rate} টাকা ব্যালেন্সে যোগ হবে।\n"
-        "৫. শেষ ধাপে নষ্ট হওয়া মেইলগুলো কারণসহ এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
-        "৬. এক ফাইলে সর্বোচ্চ {email_limit}টি @gmail.com এবং দিনে সর্বোচ্চ {daily_limit}টি ফাইল দেওয়া যাবে।\n"
-        "৭. বিগত {cooldown} দিনের মধ্যে জমা দেওয়া জিমেইল পুনরায় গ্রহণযোগ্য নয়।"
+        "১️⃣ ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই সম্পন্ন করবেন।\n"
+        "২️⃣ সমস্যা থাকা Gmail প্রথম ধাপেই নির্দিষ্ট কারণসহ বাতিল করা হবে এবং Excel ফাইলে ফেরত দেওয়া হবে।\n"
+        "৩️⃣ নির্বাচিত Gmail-গুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণে থাকবে।\n"
+        "৪️⃣ পর্যবেক্ষণ শেষে সঠিক ও অনুমোদিত প্রতিটি Gmail-এর জন্য ৳{rate} টাকা ব্যালেন্সে যোগ করা হবে।\n"
+        "৫️⃣ পর্যবেক্ষণের শেষ ধাপে সমস্যা পাওয়া Gmail-গুলো কারণসহ Excel ফাইলে ফেরত দেওয়া হবে।\n"
+        "৬️⃣ এক ফাইলে সর্বোচ্চ {email_limit}টি @gmail.com এবং প্রতিদিন সর্বোচ্চ {daily_limit}টি ফাইল সাবমিট করা যাবে।\n"
+        "৭️⃣ বিগত {cooldown} দিনের মধ্যে জমা দেওয়া Gmail পুনরায় গ্রহণযোগ্য নয়।\n\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "⚠️ 📌 **বিশেষ দ্রষ্টব্য (IMPORTANT NOTICE)**\n"
+        "✅ **শুধুমাত্র নিজের ফোনে, নিজের স্বাভাবিক নেটওয়ার্ক/IP ব্যবহার করে নিয়মিত ও বৈধভাবে তৈরি করা আসল Gmail অ্যাকাউন্ট সাবমিট করবেন।**\n"
+        "❌ **কোনো ধরনের পদ্ধতি ব্যবহার করে তৈরি করা, অস্বাভাবিক, ভুয়া বা সন্দেহজনক Gmail অ্যাকাউন্ট সাবমিট করবেন না।**\n"
+        "🚫 **অন্যের অ্যাকাউন্ট, অননুমোদিত পদ্ধতিতে তৈরি অ্যাকাউন্ট কিংবা যেসব Gmail-এ স্বাভাবিকভাবে লগইন করতে সমস্যা হয়, সেগুলো সাবমিট করা থেকে বিরত থাকুন।**\n"
+        "📌 **নিয়ম না মেনে Gmail সাবমিট করলে তা বাতিল হতে পারে। তাই ফাইল জমা দেওয়ার আগে সব নিয়ম ভালোভাবে পড়ে নিন।**\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "❤️ সবার সহযোগিতা কামনা করছি। ধন্যবাদ।\n"
+        "🤖 BOT ADMIN TEAM"
     ),
     "sell": (
-        "📤 আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।\n\n"
+        "📤 **আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।**\n\n"
         "💰 প্রতি ভ্যালিড জিমেইল রেট: ৳{rate} BDT\n"
-        "⚠️ এক ফাইলে সর্বোচ্চ {email_limit}টি @gmail.com থাকতে হবে। বিগত {cooldown} দিনের মধ্যে জমা দেওয়া কোনো মেইল গ্রহণ করা হবে না।"
+        "⚠️ এক ফাইলে সর্বোচ্চ {email_limit}টি @gmail.com থাকতে হবে। বিগত {cooldown} দিনের মধ্যে জমা দেওয়া কোনো মেইল গ্রহণ করা হবে না।\n\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🚨 **জরুরি নির্দেশনা (MUST READ):**\n"
+        "⚠️ **ফাইলে থাকা জিমেইলগুলো বটে সাবমিট করার আগে অবশ্যই আপনার ফোন থেকে সম্পূর্ণ রিমুভ (Logout/Remove) করতে হবে!**\n\n"
+        "⚠️ 📌 **বিশেষ দ্রষ্টব্য (IMPORTANT NOTICE):**\n"
+        "✅ শুধুমাত্র নিজের ফোনে, নিজের স্বাভাবিক নেটওয়ার্ক/IP ব্যবহার করে নিয়মিত ও বৈধভাবে তৈরি করা আসল Gmail অ্যাকাউন্ট সাবমিট করবেন।\n"
+        "❌ কোনো ধরনের ক্লোন, সফটওয়্যার বা অস্বাভাবিক পদ্ধতিতে তৈরি করা ভুয়া বা সন্দেহজনক Gmail অ্যাকাউন্ট সাবমিট করবেন না।\n"
+        "🚫 অন্যের অ্যাকাউন্ট বা লগইন সমস্যাযুক্ত জিমেইল জমা দিলে সম্পূর্ণ ফাইল বাতিল হয়ে যাবে।\n"
+        "━━━━━━━━━━━━━━━━━━"
     ),
     "support": "যেকোনো সমস্যা, প্রশ্ন বা সহায়তার জন্য নিচে থাকা বাটনে ক্লিক করে সাপোর্টে মেসেজ পাঠান:",
     "tutorial": (
@@ -769,6 +760,49 @@ async def show_main_menu(update, context):
 
 
 # =========================================================
+# HELPER: DISPATCH SUBMISSION TO ALL ADMINS
+# =========================================================
+
+async def dispatch_submission_to_admins(context, sub_id, user_id, username, doc_file_id, valid_emails):
+    owner, helpers = get_all_admins()
+    admin_list = [int(owner)]
+    for h in helpers:
+        try:
+            admin_list.append(int(h["user_id"]))
+        except (ValueError, TypeError):
+            pass
+    all_admin_ids = list(set(admin_list))
+
+    chat_url = get_user_chat_url(user_id, username)
+    mail_preview = "\n".join([f"{i+1}. {m}" for i, m in enumerate(valid_emails)])
+    admin_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 ইউজারের সাথে চ্যাট", url=chat_url)],
+        [InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক বাছাই ও রিসিভ", callback_data=f"sub_s1_open:{sub_id}")],
+        [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:1:{sub_id}")]
+    ])
+
+    for a_id in all_admin_ids:
+        try:
+            sent_msg = await context.bot.send_document(
+                chat_id=int(a_id),
+                document=doc_file_id,
+                caption=(
+                    f"📁 **নতুন জিমেইল সাবমিশন (#{sub_id})**\n"
+                    f"🆔 ইউজার: `{user_id}`\n"
+                    f"✉️ জিমেইল সংখ্যা: {len(valid_emails)} টি\n\n"
+                    f"📋 তালিকা:\n{mail_preview}"
+                ),
+                reply_markup=admin_kb
+            )
+            db_execute(
+                "INSERT INTO submission_admin_messages (sub_id, admin_id, message_id) VALUES (%s, %s, %s)",
+                (sub_id, int(a_id), sent_msg.message_id)
+            )
+        except Exception as e:
+            print(f"Failed to dispatch to admin {a_id}: {e}")
+
+
+# =========================================================
 # COMMAND HANDLERS
 # =========================================================
 
@@ -812,7 +846,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u_data = get_user(user.id)
         seen_rules = u_data["seen_rules"] if u_data else 0
 
-        # নতুন ইউজার হলে সবসময় ওয়েলকাম ও রুলস মেসেজ আগে দেখাবে
         if is_new or not seen_rules:
             name = user.first_name or "User"
             welcome_text = get_custom_msg("welcome").replace("{name}", name)
@@ -827,7 +860,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("📌 **গুরুত্বপূর্ণ লিংক:**", reply_markup=w_kb)
             return
 
-        # পুরাতন কিন্তু জয়েন করা নেই
         joined = await is_user_joined_all(context.bot, user.id)
         if not joined:
             await update.message.reply_text(
@@ -1015,6 +1047,108 @@ async def reset_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
+# MANUAL SUBMISSION BY ADMIN (INBOX RECOVERY)
+# =========================================================
+
+async def manualsub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+    admin_id = update.effective_user.id
+    if not is_admin(admin_id):
+        return
+
+    doc = None
+    target_user_id = None
+
+    if update.message.reply_to_message and update.message.reply_to_message.document:
+        doc = update.message.reply_to_message.document
+        if context.args and context.args[0].isdigit():
+            target_user_id = int(context.args[0])
+    elif update.message.document:
+        doc = update.message.document
+        if context.args and context.args[0].isdigit():
+            target_user_id = int(context.args[0])
+
+    if not doc or not target_user_id:
+        await update.message.reply_text(
+            "✍️ **ইনবক্স ফাইল সাবমিট নিয়মাবলী:**\n\n"
+            "১. ফাইলটি পাঠিয়ে ক্যাপশনে লিখুন: `/manualsub <user_id>`\n"
+            "অথবা\n"
+            "২. ইউজারের পাঠানো ফাইলে রিপ্লাই করে লিখুন: `/manualsub <user_id>`\n\n"
+            "উদাহরণ: `/manualsub 123456789`",
+            parse_mode="Markdown"
+        )
+        return
+
+    target_user = get_user(target_user_id)
+    if not target_user:
+        await update.message.reply_text("❌ এই ইউজার আইডি বট ডাটাবেজে পাওয়া যায়নি!")
+        return
+
+    fn = doc.file_name.lower()
+    if not (fn.endswith(".xlsx") or fn.endswith(".xls") or fn.endswith(".csv")):
+        await update.message.reply_text("❌ শুধুমাত্র Excel বা CSV ফাইল সাপোর্টেড।")
+        return
+
+    os.makedirs("downloads", exist_ok=True)
+    local_path = os.path.join("downloads", f"manual_{target_user_id}_{doc.file_name}")
+    tg_file = await doc.get_file()
+    await tg_file.download_to_drive(local_path)
+
+    try:
+        valid_emails = validate_gmail_file(local_path)
+    except Exception as e:
+        if os.path.exists(local_path):
+            os.remove(local_path)
+        await update.message.reply_text(f"❌ ফাইল পড়তে সমস্যা হয়েছে: {e}")
+        return
+
+    if os.path.exists(local_path):
+        os.remove(local_path)
+
+    if not valid_emails:
+        await update.message.reply_text("❌ ফাইলে কোনো ভ্যালিড @gmail.com পাওয়া যায়নি!")
+        return
+
+    save_submitted_emails(valid_emails)
+    emails_json = json.dumps(valid_emails)
+
+    db_execute("""
+        INSERT INTO submissions (user_id, file_id, emails_json, status, created_at)
+        VALUES (%s, %s, %s, 'pending', %s)
+    """, (target_user_id, doc.file_id, emails_json, datetime.now().isoformat()))
+
+    last_sub = db_execute("SELECT id FROM submissions WHERE user_id=%s ORDER BY id DESC LIMIT 1", (target_user_id,), fetchone=True)
+    sub_id = last_sub["id"] if last_sub else 1
+    increase_file_count(target_user_id)
+
+    await update.message.reply_text(
+        f"✅ **ম্যানুয়াল সাবমিশন সফল!**\n\n"
+        f"📁 ফাইল আইডি: `#{sub_id}`\n"
+        f"👤 ইউজার: `{target_user_id}`\n"
+        f"✉️ মোট জিমেইল: {len(valid_emails)} টি\n\n"
+        f"ইউজারকে নোটিফিকেশন পাঠানো হয়েছে এবং সকল অ্যাডমিনের কাছে ফাইল পৌঁছেছে।"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=(
+                f"📥 **আপনার ফাইল অ্যাডমিন কর্তৃক সিস্টেমে যুক্ত করা হয়েছে!**\n\n"
+                f"📁 ফাইল আইডি: `#{sub_id}`\n"
+                f"✉️ মোট ভ্যালিড Gmail: {len(valid_emails)} টি\n"
+                f"⚡ স্ট্যাটাস: 🟡 নতুন জমা (পর্যালোচনার অপেক্ষায়)\n\n"
+                f"আপনি বটের '📜 হিস্ট্রি' বাটনে চাপ দিয়ে এই ফাইলের লাইভ অগ্রগতি দেখতে পারবেন।"
+            ),
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+    await dispatch_submission_to_admins(context, sub_id, target_user_id, target_user["username"], doc.file_id, valid_emails)
+
+
+# =========================================================
 # ADMIN CONTROL PANEL
 # =========================================================
 
@@ -1135,7 +1269,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=user_id, text=f"📂 **{btn['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
         return
 
-    # হিস্ট্রি সেকশন
     if data == "user_hist_live":
         subs = db_execute(
             "SELECT * FROM submissions WHERE user_id=%s AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
@@ -1195,7 +1328,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
         return
 
-    # লাইভ ও অতীতের উইথড্র হিস্ট্রি
     elif data == "user_hist_withdrawals":
         wds = db_execute("SELECT * FROM withdrawals WHERE user_id=%s ORDER BY id DESC LIMIT 20", (user_id,), fetchall=True)
         back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
@@ -1291,11 +1423,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         kb = [[InlineKeyboardButton("💬 ইউজারের সাথে চ্যাট", url=chat_url)]]
         if sub["status"] == "pending":
-            kb.append([InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক বাছাই শুরু করুন", callback_data=f"sub_s1_open:{sub_id}")],
-                      [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:1:{sub_id}")])
+            kb.append([InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক বাছাই শুরু করুন", callback_data=f"sub_s1_open:{sub_id}")])
+            kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:1:{sub_id}")])
         elif sub["status"] == "stage2_review":
-            kb.append([InlineKeyboardButton("🔍 ধাপ ৩: চূড়ান্ত অনুমোদন শুরু করুন", callback_data=f"sub_s3_open:{sub_id}")],
-                      [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")])
+            kb.append([InlineKeyboardButton("🔍 ধাপ ৩: চূড়ান্ত অনুমোদন শুরু করুন", callback_data=f"sub_s3_open:{sub_id}")])
+            kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")])
         kb.append([InlineKeyboardButton("⬅️ পেন্ডিং লিস্ট", callback_data="admin_pending_files")])
 
         await query.edit_message_text(
@@ -1650,11 +1782,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         action_kb = [
             [InlineKeyboardButton("💬 ইউজারের সাথে চ্যাট", url=c_url)],
-            [InlineKeyboardButton("📥 ডাউনলোড এক্সেল ফাইল (.xlsx)", callback_data=f"adm_dl_excel:{sub_id}")],
-            [InlineKeyboardButton("🗑 এই ফাইলটি ডিলিট করুন", callback_data=f"adm_del_sub:{sub_id}")],
-            [InlineKeyboardButton("⬅️ ফাইল তালিকায় ফিরুন", callback_data="admin_file_history:0")]
+            [InlineKeyboardButton("📥 ডাউনলোড এক্সেল ফাইল (.xlsx)", callback_data=f"adm_dl_excel:{sub_id}")]
         ]
+
+        if s["status"] == "rejected":
+            action_kb.append([InlineKeyboardButton("🔄 আন-রিজেক্ট / পুনরায় সক্রিয় করুন", callback_data=f"adm_unreject_sub:{sub_id}")])
+
+        action_kb.append([InlineKeyboardButton("🗑 এই ফাইলটি ডিলিট করুন", callback_data=f"adm_del_sub:{sub_id}")])
+        action_kb.append([InlineKeyboardButton("⬅️ ফাইল তালিকায় ফিরুন", callback_data="admin_file_history:0")])
+
         await query.edit_message_text(info_text, reply_markup=InlineKeyboardMarkup(action_kb), parse_mode="Markdown")
+
+    elif data.startswith("adm_unreject_sub:"):
+        sub_id = int(data.split(":")[1])
+        s = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
+        if not s:
+            await query.answer("ফাইল পাওয়া যায়নি!")
+            return
+
+        db_execute("UPDATE submissions SET status='pending', rejected_count=0 WHERE id=%s", (sub_id,))
+        admin_name = get_admin_name(user_id)
+
+        try:
+            await context.bot.send_message(
+                chat_id=s["user_id"],
+                text=f"🔄 **আপনার সাবমিশন (#{sub_id}) ভুলবশত বাতিল করা হয়েছিল।**\nএটি পুনরায় পর্যালোচনার জন্য গ্রহণ করা হয়েছে।",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+        await notify_all_admins(
+            context,
+            f"🔄 **ফাইল আন-রিজেক্ট অ্যালার্ট (#Submission_{sub_id})**\n\n"
+            f"👤 আন-রিজেক্ট করেছেন: **{admin_name}**\n"
+            f"🆔 ইউজার: `{s['user_id']}`\n"
+            f"⚡ ফাইলটি পুনরায় পেন্ডিং তালিকায় পাঠানো হয়েছে।"
+        )
+
+        await query.answer("ফাইলটি পুনরায় সক্রিয় করা হয়েছে!", show_alert=True)
+        query.data = f"adm_view_sub:{sub_id}"
+        await button_handler(update, context)
 
     elif data.startswith("adm_del_sub:"):
         sub_id = int(data.split(":")[1])
@@ -1706,6 +1874,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db_execute("UPDATE submissions SET handled_by=%s WHERE id=%s", (rec_name, sub_id))
 
+        other_msgs = db_execute("SELECT admin_id, message_id FROM submission_admin_messages WHERE sub_id=%s", (sub_id,), fetchall=True)
+        if other_msgs:
+            for om in other_msgs:
+                target_admin_id = int(om["admin_id"])
+                target_msg_id = int(om["message_id"])
+                if target_admin_id != int(user_id):
+                    try:
+                        await context.bot.delete_message(chat_id=target_admin_id, message_id=target_msg_id)
+                    except Exception as e:
+                        print(f"Failed to delete message for admin {target_admin_id}: {e}")
+
+        db_execute("DELETE FROM submission_admin_messages WHERE sub_id=%s", (sub_id,))
+
         team_msg = (
             f"📢 **টিম আপডেট (#Submission_{sub_id})**\n\n"
             f"👤 ফাইল রিসিভ করেছেন: **{rec_name}**\n"
@@ -1713,17 +1894,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚡ প্রাথমিক বাছাই ও ভেরিফিকেশন শুরু হয়েছে।"
         )
         await notify_all_admins(context, team_msg, exclude_user_id=user_id)
-
-        other_msgs = db_execute("SELECT admin_id, message_id FROM submission_admin_messages WHERE sub_id=%s", (sub_id,), fetchall=True)
-        if other_msgs:
-            for om in other_msgs:
-                if int(om["admin_id"]) != int(user_id):
-                    try:
-                        await context.bot.delete_message(chat_id=int(om["admin_id"]), message_id=int(om["message_id"]))
-                    except Exception:
-                        pass
-
-        db_execute("DELETE FROM submission_admin_messages WHERE sub_id=%s", (sub_id,))
 
         emails = json.loads(sub["emails_json"])
         if sub_id not in admin_stage1_selections:
@@ -2039,7 +2209,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# FINALIZATION LOGICS
+# FINALIZATION LOGICS (DETAILED ADMIN BROADCASTS)
 # =========================================================
 
 async def finalize_stage1(context, query, sub_id, in_review_emails, rejected_items, admin_user_id):
@@ -2075,6 +2245,16 @@ async def finalize_stage1(context, query, sub_id, in_review_emails, rejected_ite
             await context.bot.send_message(chat_id=admin_user_id, text=caption_txt, reply_markup=next_kb, parse_mode="Markdown")
     except Exception:
         await context.bot.send_message(chat_id=admin_user_id, text=caption_txt, reply_markup=next_kb, parse_mode="Markdown")
+
+    team_report = (
+        f"📋 **টিম আপডেট: ১ম ধাপ সম্পন্ন (#Submission_{sub_id})**\n\n"
+        f"👤 রিসিভ ও বাছাইকারী: **{h_by}**\n"
+        f"🆔 ইউজার: `{sub['user_id']}`\n"
+        f"✅ পর্যবেক্ষণে রাখা হয়েছে: **{len(in_review_emails)} টি**\n"
+        f"❌ সমস্যাযুক্ত বাতিল: **{len(rejected_items)} টি**\n"
+        f"⚡ স্ট্যাটাস: ২৪-৪৮ ঘণ্টা পর্যবেক্ষণ চলছে।"
+    )
+    await notify_all_admins(context, team_report, exclude_user_id=admin_user_id)
 
     user_msg = (
         f"📋 **আপনার জিমেইল সাবমিশনের ১ম ধাপের ফলাফল!** (#{sub_id})\n\n"
@@ -2126,12 +2306,13 @@ async def finalize_stage3(context, query, sub_id, accepted_emails, rejected_item
     approver = get_admin_name(admin_user_id)
 
     team_msg = (
-        f"🎉 **টিম অ্যালার্ট: ফাইল চূড়ান্ত সম্পন্ন হয়েছে! (#Submission_{sub_id})**\n\n"
-        f"👤 সম্পন্নকারী: **{approver}**\n"
+        f"🎉 **টিম অ্যালার্ট: ফাইল চূড়ান্ত অনুমোদন সম্পন্ন! (#Submission_{sub_id})**\n\n"
+        f"👤 অনুমোদনকারী: **{approver}**\n"
         f"🆔 ইউজার: `{sub['user_id']}`\n"
-        f"✅ অনুমোদিত: {total_acc} টি\n"
-        f"❌ মোট বাতিল: {total_rej} টি\n"
-        f"💰 ব্যালেন্সে যোগ হয়েছে: ৳{reward:.2f} BDT"
+        f"✅ চূড়ান্ত ভ্যালিড: **{total_acc} টি**\n"
+        f"❌ সর্বমোট বাতিল: **{total_rej} টি**\n"
+        f"💰 ব্যালেন্সে যোগ হয়েছে: **৳{reward:.2f} BDT**\n"
+        f"🔒 ফাইল স্ট্যাটাস: সম্পন্ন (Completed)"
     )
     await notify_all_admins(context, team_msg, exclude_user_id=admin_user_id)
 
@@ -2188,10 +2369,11 @@ async def finalize_reject_all(context, query, sub_id, rejected_items, admin_user
     db_execute("UPDATE submissions SET status='rejected', accepted_count=0, rejected_count=%s WHERE id=%s", (total_rej, sub_id))
 
     team_msg = (
-        f"❌ **টিম অ্যালার্ট: ফাইল বাতিল করা হয়েছে! (#Submission_{sub_id})**\n\n"
+        f"❌ **টিম অ্যালার্ট: পুরো ফাইল বাতিল করা হয়েছে! (#Submission_{sub_id})**\n\n"
         f"👤 বাতিলকারী: **{admin_name}**\n"
         f"🆔 ইউজার: `{sub['user_id']}`\n"
-        f"❌ বাতিল জিমেইল: {total_rej} টি"
+        f"❌ বাতিল জিমেইল: **{total_rej} টি**\n"
+        f"💡 ভুল করে বাতিল হলে প্যানেল থেকে 'আন-রিজেক্ট' করতে পারবেন।"
     )
     await notify_all_admins(context, team_msg, exclude_user_id=admin_user_id)
 
@@ -2417,7 +2599,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(clean_sup, reply_markup=(sup_kb or def_kb), parse_mode="Markdown")
         return
 
-    # টিউটোরিয়াল বাটন
     if text == btn_tut or "TUTORIAL" in text.upper():
         tut_text = get_custom_msg("tutorial")
         clean_tut, tut_kb = parse_text_and_buttons(tut_text)
@@ -2738,48 +2919,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⏳ অ্যাডমিন প্রাথমিক বাছাইয়ের পর জিমেইলগুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণ করবেন।"
         )
 
-        owner, helpers = get_all_admins()
-        admin_list = []
-        if owner:
-            try:
-                admin_list.append(int(owner))
-            except (ValueError, TypeError):
-                pass
-        for h in helpers:
-            try:
-                admin_list.append(int(h["user_id"]))
-            except (ValueError, TypeError):
-                pass
-        all_admin_ids = list(set(admin_list))
-
-        chat_url = get_user_chat_url(user.id, user.username)
-
-        mail_preview = "\n".join([f"{i+1}. {m}" for i, m in enumerate(valid_emails)])
-        admin_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 ইউজারের সাথে চ্যাট", url=chat_url)],
-            [InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক বাছাই ও রিসিভ", callback_data=f"sub_s1_open:{sub_id}")],
-            [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:1:{sub_id}")]
-        ])
-
-        for a_id in all_admin_ids:
-            try:
-                sent_msg = await context.bot.send_document(
-                    chat_id=int(a_id),
-                    document=doc.file_id,
-                    caption=(
-                        f"📁 নতুন জিমেইল সাবমিশন (#{sub_id})\n"
-                        f"🆔 ইউজার: `{user.id}`\n"
-                        f"✉️ জিমেইল সংখ্যা: {len(valid_emails)} টি\n\n"
-                        f"📋 তালিকা:\n{mail_preview}"
-                    ),
-                    reply_markup=admin_kb
-                )
-                db_execute(
-                    "INSERT INTO submission_admin_messages (sub_id, admin_id, message_id) VALUES (%s, %s, %s)",
-                    (sub_id, int(a_id), sent_msg.message_id)
-                )
-            except Exception:
-                pass
+        await dispatch_submission_to_admins(context, sub_id, user.id, user.username, doc.file_id, valid_emails)
         return
 
     await update.message.reply_text("Please use the buttons below.", reply_markup=get_bottom_keyboard())
@@ -2837,14 +2977,11 @@ async def refinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# MAIN
+# MAIN (WEBHOOK MODE)
 # =========================================================
 
 def main():
     init_db()
-
-    web_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_thread.start()
 
     application = Application.builder().token(BOT_TOKEN).build()
 
@@ -2858,14 +2995,29 @@ def main():
     application.add_handler(CommandHandler("cutbalance", cut_balance_cmd, filters=filters.ChatType.PRIVATE))
     application.add_handler(CommandHandler("resetbalance", reset_balance_cmd, filters=filters.ChatType.PRIVATE))
     application.add_handler(CommandHandler("refinfo", refinfo_cmd, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("manualsub", manualsub_cmd, filters=filters.ChatType.PRIVATE))
+
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.Document.ALL & filters.CaptionRegex(r"^/manualsub"), manualsub_cmd))
 
     application.add_handler(CallbackQueryHandler(withdrawal_method_handler, pattern=r"^method_"))
     application.add_handler(CallbackQueryHandler(button_handler))
     
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler))
 
-    print("Gmail Sell Bot with Withdraw History & Tutorial Button is running...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    if RENDER_EXTERNAL_URL:
+        clean_url = RENDER_EXTERNAL_URL.rstrip("/")
+        webhook_target = f"{clean_url}/{BOT_TOKEN}"
+        print(f"Starting Superfast Webhook on port {PORT}: {webhook_target}")
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=BOT_TOKEN,
+            webhook_url=webhook_target,
+            allowed_updates=Update.ALL_TYPES
+        )
+    else:
+        print("Starting Long Polling fallback...")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
