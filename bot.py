@@ -46,7 +46,7 @@ if not DATABASE_URL:
 PORT = int(os.environ.get("PORT", 10000))
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 
-# অফিসিয়াল গ্রুপ ও চ্যানেল
+# অফিসিয়াল গ্রুপ ও চ্যানেল
 FORCE_GROUP_CHAT_ID = -1004471047712
 FORCE_GROUP_LINK = "https://t.me/+rVP6CkmqrnFlNzA1"
 
@@ -890,7 +890,7 @@ async def set_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if context.args[0] == ADMIN_SECRET_KEY:
-        await update.message.reply_text(f"👑 আপনার আইডি ({user_id}) স্থায়ীভাবে ওনার হিসেবে রয়েছে। /admin দিয়ে প্যানেল ওপেন করুন।")
+        await update.message.reply_text(f"👑 আপনার আইডি ({user_id}) স্থায়ীভাবে ওনার হিসেবে রয়েছে। /admin দিয়ে প্যানেল ওপেন করুন।")
     else:
         await update.message.reply_text("❌ পাসওয়ার্ড ভুল!")
 
@@ -1123,7 +1123,7 @@ async def manualsub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     increase_file_count(target_user_id)
 
     await update.message.reply_text(
-        f"✅ **ম্যানুয়াল সাবমিশন সফল!**\n\n"
+        f"✅ **ম্যানুয়াল সাবমিশন সফল!**\n\n"
         f"📁 ফাইল আইডি: `#{sub_id}`\n"
         f"👤 ইউজার: `{target_user_id}`\n"
         f"✉️ মোট জিমেইল: {len(valid_emails)} টি\n\n"
@@ -1138,7 +1138,7 @@ async def manualsub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📁 ফাইল আইডি: `#{sub_id}`\n"
                 f"✉️ মোট ভ্যালিড Gmail: {len(valid_emails)} টি\n"
                 f"⚡ স্ট্যাটাস: 🟡 নতুন জমা (পর্যালোচনার অপেক্ষায়)\n\n"
-                f"আপনি বটের '📜 হিস্ট্রি' বাটনে চাপ দিয়ে এই ফাইলের লাইভ অগ্রগতি দেখতে পারবেন।"
+                f"আপনি বটের '📜 হিস্ট্রি' বাটনে চাপ দিয়ে এই ফাইলের লাইভ অগ্রগতি দেখতে পারবেন।"
             ),
             parse_mode="Markdown"
         )
@@ -1165,7 +1165,7 @@ async def show_admin_panel(query, user_id):
         ],
         [
             InlineKeyboardButton("👥 রেফারেল ট্র্যাকার", callback_data="admin_ref_tracker"),
-            InlineKeyboardButton("➕ ম্যানুয়াল রেফার যোগ", callback_data="admin_add_ref_prompt")
+            InlineKeyboardButton("➕ ম্যানুয়াল রেফার যোগ", callback_data="admin_add_ref_prompt")
         ],
         [InlineKeyboardButton("⚙️ আর্থিক লেনদেন ও সিস্টেম লিমিট কন্ট্রোল", callback_data="admin_limits_menu")],
         [InlineKeyboardButton("🎛 বড় কীবোর্ড বাটন ও সাব-মেনু বিল্ডার", callback_data="dyn_manage:0")],
@@ -1277,7 +1277,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if not subs:
             back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
-            await query.edit_message_text("⏳ **বর্তমানে আপনার কোনো ফাইল প্রসেসিং বা পর্যালোচনায় নেই।**\n\nনতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখা যাবে।", reply_markup=back_kb, parse_mode="Markdown")
+            await query.edit_message_text("⏳ **বর্তমানে আপনার কোনো ফাইল প্রসেসিং বা পর্যালোচনায় নেই।**\n\nনতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখা যাবে।", reply_markup=back_kb, parse_mode="Markdown")
             return
 
         hist_msg = "⏳ **আপনার লাইভ ও চলমান ফাইলগুলোর স্ট্যাটাস:**\n\n"
@@ -1333,11 +1333,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
         
         if not wds:
-            await query.edit_message_text("💸 **আপনার কোনো উইথড্রয়াল হিস্ট্রি পাওয়া যায়নি।**\n\nআপনি টাকা উত্তোলন করলে তার লাইভ ও পূর্ববর্তী হিস্ট্রি এখানে দেখতে পাবেন।", reply_markup=back_kb, parse_mode="Markdown")
+            await query.edit_message_text("💸 **আপনার কোনো উইথড্রয়াল হিস্ট্রি পাওয়া যায়নি।**\n\nআপনি টাকা উত্তোলন করলে তার লাইভ ও পূর্ববর্তী হিস্ট্রি এখানে দেখতে পাবেন।", reply_markup=back_kb, parse_mode="Markdown")
             return
 
         u_rate = get_config("usdt_rate", float)
-        wd_msg = "💸 **আপনার উইথড্রয়াল হিস্ট্রি (লাইভ ও অতীত):**\n\n"
+        wd_msg = "💸 **আপনার উইথড্রয়াল হিস্ট্রি (লাইভ ও অতীত):**\n\n"
         
         for w in wds:
             status_map = {
@@ -1399,7 +1399,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_pending_files":
         subs = db_execute("SELECT * FROM submissions WHERE status IN ('pending', 'stage2_review') ORDER BY id DESC LIMIT 15", fetchall=True)
         if not subs:
-            await query.edit_message_text("ℹ️ বর্তমানে কোনো পেন্ডিং বা পর্যালোচনায় থাকা ফাইল নেই।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]]))
+            await query.edit_message_text("ℹ️ বর্তমানে কোনো পেন্ডিং বা পর্যালোচনায় থাকা ফাইল নেই।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]]))
             return
 
         kb = []
@@ -1414,7 +1414,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sub_id = int(data.split(":")[1])
         sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
         if not sub:
-            await query.answer("ফাইল পাওয়া যায়নি!")
+            await query.answer("ফাইল পাওয়া যায়নি!")
             return
 
         emails = json.loads(sub["emails_json"])
@@ -1426,8 +1426,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb.append([InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক বাছাই শুরু করুন", callback_data=f"sub_s1_open:{sub_id}")])
             kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:1:{sub_id}")])
         elif sub["status"] == "stage2_review":
-            kb.append([InlineKeyboardButton("🔍 ধাপ ৩: চূড়ান্ত অনুমোদন শুরু করুন", callback_data=f"sub_s3_open:{sub_id}")])
-            kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")])
+            kb.append([InlineKeyboardButton("🔍 ধাপ ৩: চূড়ান্ত অনুমোদন শুরু করুন", callback_data=f"sub_s3_open:{sub_id}")],
+                      [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")])
         kb.append([InlineKeyboardButton("⬅️ পেন্ডিং লিস্ট", callback_data="admin_pending_files")])
 
         await query.edit_message_text(
@@ -1443,7 +1443,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("admin_all_users:"):
         users = get_all_users_list(limit=25)
         if not users:
-            await query.edit_message_text("ℹ️ কোনো ইউজার পাওয়া যায়নি।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]]))
+            await query.edit_message_text("ℹ️ কোনো ইউজার পাওয়া যায়নি।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]]))
             return
 
         text = "👥 **সকল ইউজার তালিকা (সর্বশেষ ২৫ জন):**\n\n"
@@ -1467,7 +1467,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for r in top:
                 u_name = f"@{r['username']}" if r['username'] else "No Username"
                 text += f"👤 আইডি: `{r['user_id']}` ({u_name})\n"
-                text += f"   ┗ মোট রেফার: **{r['total_refs']}** (রিয়েল: {r['organic_count']}, ম্যানুয়াল: {r['manual_ref_count']})\n\n"
+                text += f"   ┗ মোট রেফার: **{r['total_refs']}** (রিয়েল: {r['organic_count']}, ম্যানুয়াল: {r['manual_ref_count']})\n\n"
             text += "💡 ইউজারের বিস্তারিত রেফার দেখতে চ্যাটে লিখুন:\n`/refinfo <user_id>`"
 
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
@@ -1692,7 +1692,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "admin_broadcast":
         context.user_data["state"] = "admin_broadcast"
-        await query.edit_message_text("📢 ব্রডকাস্ট মেসেজ লিখে পাঠান:\n\n(নিচে বাটন দিতে চাইলে লেখার সাথে `[বাটন | লিংক]` দিয়ে দিন)")
+        await query.edit_message_text("📢 ব্রডকাস্ট মেসেজ লিখে পাঠান:\n\n(নিচে বাটন দিতে চাইলে লেখার সাথে `[বাটন | লিংক]` দিয়ে দিন)")
 
     elif data == "admin_single_message":
         context.user_data["state"] = "admin_single_user"
@@ -2510,9 +2510,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             t_user, cnt = int(parts[0]), int(parts[1])
             if get_user(t_user):
                 add_manual_referral(t_user, cnt)
-                await update.message.reply_text(f"✅ সফল হয়েছে! ইউজার `{t_user}`-এর অ্যাকাউন্টে {cnt} রেফার যোগ করা হয়েছে।")
+                await update.message.reply_text(f"✅ সফল হয়েছে! ইউজার `{t_user}`-এর অ্যাকাউন্টে {cnt} রেফার যোগ করা হয়েছে।")
             else:
-                await update.message.reply_text("❌ ইউজার ডাটাবেজে পাওয়া যায়নি!")
+                await update.message.reply_text("❌ ইউজার ডাটাবেজে পাওয়া যায়নি!")
         else:
             await update.message.reply_text("❌ ফরম্যাট ভুল! `<user_id> <সংখ্যা>` এভাবে দিন।")
         return
@@ -2949,23 +2949,23 @@ async def refinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("ব্যবহার নিয়ম: `/refinfo <user_id>`")
+        await update.message.reply_text("ব্যবহার নিয়ম: `/refinfo <user_id>`")
         return
 
     target_id = int(context.args[0])
     u = get_user(target_id)
     if not u:
-        await update.message.reply_text("❌ এই ইউজার ডাটাবেজে পাওয়া যায়নি।")
+        await update.message.reply_text("❌ এই ইউজার ডাটাবেজে পাওয়া যায়নি।")
         return
 
     refs = get_referral_details(target_id)
     total_c = get_referral_count(target_id)
 
     res_text = f"📊 **রেফারেল হিস্ট্রি:** `{target_id}`\n"
-    res_text += f"মোট রেফার: **{total_c}** (অর্গানিক: {len(refs) if refs else 0}, ম্যানুয়াল: {u.get('manual_ref_count', 0)})\n\n"
+    res_text += f"মোট রেফার: **{total_c}** (অর্গানিক: {len(refs) if refs else 0}, ম্যানুয়াল: {u.get('manual_ref_count', 0)})\n\n"
 
     if not refs:
-        res_text += "ℹ️ অর্গানিক কোনো ইউজার এখনো তার লিংকে জয়েন করেনি।"
+        res_text += "ℹ️ অর্গানিক কোনো ইউজার এখনো তার লিংকে জয়েন করেনি।"
     else:
         res_text += "📋 **রেফার করা ইউজারদের তালিকা:**\n"
         for r in refs[:30]:
