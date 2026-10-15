@@ -1,3 +1,8 @@
+# =========================================================
+# FILE: bot.py
+# PROJECT: Automated Multi-Stage Gmail Buy/Sell Bot
+# =========================================================
+
 import asyncio
 import io
 import json
@@ -36,7 +41,6 @@ if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN environment variable is not set.")
 
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "mysecretadmin123")
-
 HARDCODED_OWNER_ID = 8919985167
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -46,7 +50,6 @@ if not DATABASE_URL:
 PORT = int(os.environ.get("PORT", 10000))
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 
-# অফিসিয়াল গ্রুপ ও চ্যানেল
 FORCE_GROUP_CHAT_ID = -1004471047712
 FORCE_GROUP_LINK = "https://t.me/+rVP6CkmqrnFlNzA1"
 
@@ -101,6 +104,7 @@ def init_db():
             files_today INTEGER DEFAULT 0,
             last_file_date TEXT,
             referred_by BIGINT DEFAULT NULL,
+            ref_bonus_rewarded INTEGER DEFAULT 0,
             seen_rules INTEGER DEFAULT 0,
             created_at TEXT
         )
@@ -176,6 +180,11 @@ def init_db():
         )
     """)
 
+    try:
+        db_execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_bonus_rewarded INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
     for k, v in CONFIG_DEFAULTS.items():
         db_execute("""
             INSERT INTO settings (key, value) VALUES (%s, %s)
@@ -184,7 +193,7 @@ def init_db():
 
 
 # =========================================================
-# CONFIG HELPERS & IN-MEMORY CACHE
+# CONFIG HELPERS & SWITCH CACHE
 # =========================================================
 
 CONFIG_DEFAULTS = {
@@ -196,7 +205,23 @@ CONFIG_DEFAULTS = {
     "daily_file_limit": "5",
     "max_emails_per_file": "5",
     "duplicate_check_days": "3",
-    "maintenance": "0"
+    "maintenance": "0",
+    "switch_sell": "1",
+    "switch_withdraw": "1",
+    "switch_referral": "1",
+    "switch_balance": "1",
+    "switch_history": "1",
+    "switch_rules": "1",
+    "switch_tutorial": "1",
+    "switch_support": "1",
+    "notice_sell": "⚠️ বর্তমানে আমাদের জিমেইল ফাইল রিসিভ কার্যক্রম সাময়িকভাবে বন্ধ আছে। পরবর্তীতে খোলার সময় নোটিশের মাধ্যমে জানিয়ে দেওয়া হবে।",
+    "notice_withdraw": "⚠️ বর্তমানে পেমেন্ট ও উইথড্র সিস্টেম সাময়িকভাবে মেইনটেন্যান্সে রয়েছে। খুব শীঘ্রই চালু হবে।",
+    "notice_referral": "⚠️ রেফারেল সিস্টেম সাময়িকভাবে স্থগিত রয়েছে।",
+    "notice_balance": "⚠️ ব্যালেন্স সার্ভারে কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।",
+    "notice_history": "⚠️ হিস্ট্রি রেকর্ড বর্তমানে আপডেট করা হচ্ছে।",
+    "notice_rules": "⚠️ নিয়মাবলী সেকশন বর্তমানে আপডেট হচ্ছে।",
+    "notice_tutorial": "⚠️ টিউটোরিয়াল ভিডিও শীঘ্রই নতুন নিয়মে আপডেট করা হবে।",
+    "notice_support": "⚠️ সাপোর্ট টিম বর্তমানে ব্যস্ত রয়েছে। অনুগ্রহ করে কিছুক্ষণ পর মেসেজ দিন।"
 }
 
 CONFIG_CACHE = {}
@@ -226,6 +251,36 @@ def set_config(key, val):
         INSERT INTO settings (key, value) VALUES (%s, %s)
         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value
     """, (key, str(val)))
+
+
+def is_button_active(btn_key):
+    return get_config(f"switch_{btn_key}", int) == 1
+
+def toggle_button_switch(btn_key):
+    cur = is_button_active(btn_key)
+    new_val = 0 if cur else 1
+    set_config(f"switch_{btn_key}", new_val)
+    return new_val == 1
+
+def get_button_closed_notice(btn_key):
+    res = db_execute("SELECT value FROM settings WHERE key=%s", (f"notice_{btn_key}",), fetchone=True)
+    if res and res["value"]:
+        return res["value"]
+    return CONFIG_DEFAULTS.get(f"notice_{btn_key}", "⚠️ এই অপশনটি বর্তমানে সাময়িকভাবে বন্ধ আছে।")
+
+
+# =========================================================
+# CLICK-TO-PAY (DEEP LINK BUILDER)
+# =========================================================
+
+def build_payment_deep_link(method, account_number, amount):
+    amt_str = f"{amount:.2f}"
+    clean_acc = account_number.strip()
+    if method == "Bkash":
+        return f"intent://sendmoney?phone={clean_acc}&amount={amt_str}#Intent;scheme=bkash;package=com.bKash.customerapp;end"
+    elif method == "Nagad":
+        return f"intent://sendmoney?phone={clean_acc}&amount={amt_str}#Intent;scheme=nagad;package=com.konasl.nagad;end"
+    return None
 
 
 # =========================================================
@@ -272,13 +327,11 @@ def get_user_chat_url(target_user_id, username=None):
 def get_owner_id():
     return HARDCODED_OWNER_ID
 
-
 def is_admin(user_id):
     if int(user_id) == HARDCODED_OWNER_ID:
         return True
     helper = db_execute("SELECT user_id FROM helpers WHERE user_id=%s", (user_id,), fetchone=True)
     return helper is not None
-
 
 def get_admin_name(user_id):
     if int(user_id) == HARDCODED_OWNER_ID:
@@ -288,27 +341,22 @@ def get_admin_name(user_id):
         return helper["admin_name"]
     return f"Admin ({user_id})"
 
-
 def add_helper(user_id, name="Admin"):
     db_execute("""
         INSERT INTO helpers (user_id, admin_name, added_at) VALUES (%s, %s, %s)
         ON CONFLICT(user_id) DO UPDATE SET admin_name=EXCLUDED.admin_name
     """, (user_id, name, datetime.now().isoformat()))
 
-
 def remove_helper(user_id):
     db_execute("DELETE FROM helpers WHERE user_id=%s", (user_id,))
 
-
 def set_helper_name(user_id, name):
     db_execute("UPDATE helpers SET admin_name=%s WHERE user_id=%s", (name, user_id))
-
 
 def get_all_admins():
     owner = HARDCODED_OWNER_ID
     helpers = db_execute("SELECT user_id, admin_name FROM helpers", fetchall=True)
     return owner, (helpers or [])
-
 
 async def notify_all_admins(context, message, exclude_user_id=None):
     owner, helpers = get_all_admins()
@@ -335,10 +383,8 @@ async def notify_all_admins(context, message, exclude_user_id=None):
         except Exception as e:
             print(f"Failed to notify admin {a_id}: {e}")
 
-
 def is_maintenance_mode():
     return get_config("maintenance", int) == 1
-
 
 def toggle_maintenance_mode():
     current = is_maintenance_mode()
@@ -430,8 +476,8 @@ DEFAULT_MESSAGES = {
     ),
     "referral": (
         "👥 রেফার করে ইনকাম করুন!\n\n"
-        "প্রতি সফল রেফারে আপনি পাবেন ৳{bonus} BDT বোনাস।\n"
-        "আপনার রেফারেল লিংকটি শেয়ার করুন:\n\n"
+        "আপনার রেফারেল লিংকে জয়েন করা কোনো ইউজার যখন তার প্রথম জিমেইল ফাইল সফলভাবে জমা দিয়ে অ্যাপ্রুভ পাবেন, তখন আপনি পাবেন ৳{bonus} BDT নিশ্চিত বোনাস।\n\n"
+        "আপনার রেফারেল লিংকটি শেয়ার করুন:\n"
         "🔗 `{link}`"
     )
 }
@@ -445,7 +491,6 @@ MESSAGE_NAMES = {
     "support": "📞 Support Text",
     "maintenance": "🛠 Maintenance Notice"
 }
-
 
 def get_custom_msg(key):
     res = db_execute("SELECT value FROM settings WHERE key=%s", (f"msg_{key}",), fetchone=True)
@@ -462,23 +507,18 @@ def get_custom_msg(key):
         .replace("{cooldown}", str(cd))
     )
 
-
 def set_custom_msg(key, text):
     set_config(f"msg_{key}", text)
 
-
 def delete_custom_msg(key):
     db_execute("DELETE FROM settings WHERE key=%s", (f"msg_{key}",))
-
 
 def get_button_title(btn_key, default_title):
     res = db_execute("SELECT value FROM settings WHERE key=%s", (f"btn_{btn_key}",), fetchone=True)
     return res["value"] if res else default_title
 
-
 def set_button_title(btn_key, new_title):
     set_config(f"btn_{btn_key}", new_title)
-
 
 def clear_junk_cache():
     deleted_files = 0
@@ -497,74 +537,68 @@ def clear_junk_cache():
     return deleted_files
 
 
+# =========================================================
+# USER & BALANCE OPERATIONS
+# =========================================================
+
 def add_user(user, referrer_id=None):
     existing = db_execute("SELECT * FROM users WHERE user_id=%s", (user.id,), fetchone=True)
     if not existing:
         db_execute("""
-            INSERT INTO users (user_id, username, balance, manual_ref_count, files_today, last_file_date, referred_by, seen_rules, created_at)
-            VALUES (%s, %s, 0, 0, 0, %s, %s, 0, %s)
+            INSERT INTO users (user_id, username, balance, manual_ref_count, files_today, last_file_date, referred_by, ref_bonus_rewarded, seen_rules, created_at)
+            VALUES (%s, %s, 0, 0, 0, %s, %s, 0, 0, %s)
         """, (user.id, user.username or "", datetime.now().strftime("%Y-%m-%d"), referrer_id, datetime.now().isoformat()))
         return True
     else:
         db_execute("UPDATE users SET username=%s WHERE user_id=%s", (user.username or "", user.id))
         return False
 
-
 def get_user(user_id):
     return db_execute("SELECT * FROM users WHERE user_id=%s", (user_id,), fetchone=True)
 
-
 def mark_rules_seen(user_id):
     db_execute("UPDATE users SET seen_rules=1 WHERE user_id=%s", (user_id,))
-
 
 def get_balance(user_id):
     user = get_user(user_id)
     return float(user["balance"]) if user else 0.0
 
-
 def update_balance(user_id, amount):
     db_execute("UPDATE users SET balance = balance + %s WHERE user_id=%s", (amount, user_id))
-
 
 def get_referral_count(user_id):
     u = get_user(user_id)
     manual = int(u["manual_ref_count"]) if (u and u.get("manual_ref_count")) else 0
-    res = db_execute("SELECT COUNT(*) AS c FROM users WHERE referred_by=%s", (user_id,), fetchone=True)
+    res = db_execute("SELECT COUNT(*) AS c FROM users WHERE referred_by=%s AND ref_bonus_rewarded=1", (user_id,), fetchone=True)
     organic = res["c"] if res else 0
     return organic + manual
-
 
 def add_manual_referral(user_id, count):
     db_execute("UPDATE users SET manual_ref_count = manual_ref_count + %s WHERE user_id=%s", (count, user_id))
 
-
 def get_referral_details(user_id):
     return db_execute("""
-        SELECT user_id, username, created_at 
+        SELECT user_id, username, ref_bonus_rewarded, created_at 
         FROM users 
         WHERE referred_by=%s 
         ORDER BY created_at DESC
     """, (user_id,), fetchall=True)
 
-
 def get_top_referrers(limit=25):
     return db_execute(f"""
         SELECT u.user_id, u.username, u.manual_ref_count,
-               COUNT(r.user_id) as organic_count,
-               (COUNT(r.user_id) + COALESCE(u.manual_ref_count, 0)) as total_refs
+               COUNT(CASE WHEN r.ref_bonus_rewarded = 1 THEN 1 END) as organic_count,
+               (COUNT(CASE WHEN r.ref_bonus_rewarded = 1 THEN 1 END) + COALESCE(u.manual_ref_count, 0)) as total_refs
         FROM users u
         LEFT JOIN users r ON u.user_id = r.referred_by
         GROUP BY u.user_id, u.username, u.manual_ref_count
-        HAVING (COUNT(r.user_id) + COALESCE(u.manual_ref_count, 0)) > 0
+        HAVING (COUNT(CASE WHEN r.ref_bonus_rewarded = 1 THEN 1 END) + COALESCE(u.manual_ref_count, 0)) > 0
         ORDER BY total_refs DESC
         LIMIT {limit}
     """, fetchall=True)
 
-
 def get_all_users_list(limit=50):
     return db_execute(f"SELECT user_id, username, balance, created_at FROM users ORDER BY user_id DESC LIMIT {limit}", fetchall=True)
-
 
 def get_today_file_count(user_id):
     user = get_user(user_id)
@@ -575,7 +609,6 @@ def get_today_file_count(user_id):
         db_execute("UPDATE users SET files_today=0, last_file_date=%s WHERE user_id=%s", (today, user_id))
         return 0
     return user["files_today"]
-
 
 def increase_file_count(user_id):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -622,7 +655,6 @@ def get_first_time_markup():
         [InlineKeyboardButton("💬 সরাসরি মেসেজ পাঠান / Support", url=SUPPORT_URL)]
     ])
 
-
 def get_rejoin_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 ১. পেমেন্ট প্রুফ চ্যানেল", url=FORCE_CHANNEL_LINK)],
@@ -632,13 +664,12 @@ def get_rejoin_markup():
 
 
 # =========================================================
-# VALIDATIONS
+# VALIDATIONS & DUPLICATE CHECK
 # =========================================================
 
 BD_PHONE_REGEX = re.compile(r"^01[3-9]\d{8}$")
 BINANCE_UID_REGEX = re.compile(r"^\d{7,10}$")
 GMAIL_REGEX = re.compile(r"^[\w.+-]+@gmail\.com$", re.IGNORECASE)
-
 
 def validate_gmail_file(file_path):
     raw_entries = []
@@ -665,7 +696,6 @@ def validate_gmail_file(file_path):
 
     return unique_gmails
 
-
 def check_recent_duplicate_emails(emails):
     cd_days = get_config("duplicate_check_days", int)
     cutoff_date = (datetime.now() - timedelta(days=cd_days)).isoformat()
@@ -679,7 +709,6 @@ def check_recent_duplicate_emails(emails):
     if rows:
         return [r["email"] for r in rows]
     return []
-
 
 def save_submitted_emails(emails):
     now_str = datetime.now().isoformat()
@@ -822,7 +851,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data.clear()
 
-        ref_bonus = get_config("referral_bonus", float)
         referrer_id = None
         if context.args and len(context.args) > 0:
             try:
@@ -833,15 +861,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 referrer_id = None
 
         is_new = add_user(user, referrer_id)
-        if is_new and referrer_id:
-            update_balance(referrer_id, ref_bonus)
-            try:
-                await context.bot.send_message(
-                    chat_id=referrer_id,
-                    text=f"🎉 আপনার একটি নতুন রেফার সফল হয়েছে! বোনাস: +৳{ref_bonus:.2f} BDT"
-                )
-            except Exception:
-                pass
 
         u_data = get_user(user.id)
         seen_rules = u_data["seen_rules"] if u_data else 0
@@ -1046,10 +1065,6 @@ async def reset_balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🔄 ব্যালেন্স রিসেট সফল! ইউজার: {t_id}, ব্যালেন্স: ৳0.00")
 
 
-# =========================================================
-# MANUAL SUBMISSION BY ADMIN (INBOX RECOVERY)
-# =========================================================
-
 async def manualsub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_chat or update.effective_chat.type != "private":
         return
@@ -1138,7 +1153,7 @@ async def manualsub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📁 ফাইল আইডি: `#{sub_id}`\n"
                 f"✉️ মোট ভ্যালিড Gmail: {len(valid_emails)} টি\n"
                 f"⚡ স্ট্যাটাস: 🟡 নতুন জমা (পর্যালোচনার অপেক্ষায়)\n\n"
-                f"আপনি বটের '📜 হিস্ট্রি' বাটনে চাপ দিয়ে এই ফাইলের লাইভ অগ্রগতি দেখতে পারবেন।"
+                f"আপনি বটের '📜 হিস্ট্রি' বাটনে চাপ দিয়ে লাইভ অগ্রগতি দেখতে পারবেন।"
             ),
             parse_mode="Markdown"
         )
@@ -1158,23 +1173,35 @@ async def show_admin_panel(query, user_id):
     is_owner = (owner and int(user_id) == int(owner))
 
     keyboard = [
-        [InlineKeyboardButton(f"🛠 স্ট্যাটাস: {m_status}", callback_data="toggle_maintenance")],
+        [InlineKeyboardButton(f"🛠 গ্লোবাল স্ট্যাটাস: {m_status}", callback_data="toggle_maintenance")],
         [
-            InlineKeyboardButton("📨 পেন্ডিং ফাইল ম্যানেজার", callback_data="admin_pending_files"),
-            InlineKeyboardButton("👥 সকল ইউজার ডিরেক্টরি", callback_data="admin_all_users:0")
+            InlineKeyboardButton("📥 ইনবক্স ফাইল আপলোড", callback_data="adm_wizard_inbox_start"),
+            InlineKeyboardButton("📨 পেন্ডিং ফাইলস", callback_data="admin_pending_files")
         ],
         [
-            InlineKeyboardButton("👥 রেফারেল ট্র্যাকার", callback_data="admin_ref_tracker"),
-            InlineKeyboardButton("➕ ম্যানুয়াল রেফার যোগ", callback_data="admin_add_ref_prompt")
+            InlineKeyboardButton("🎛️ বাটন কন্ট্রোল ও সুইচ", callback_data="admin_switches_menu"),
+            InlineKeyboardButton("⚙️ আর্থিক লেনদেন ও লিমিট", callback_data="admin_limits_menu")
         ],
-        [InlineKeyboardButton("⚙️ আর্থিক লেনদেন ও সিস্টেম লিমিট কন্ট্রোল", callback_data="admin_limits_menu")],
-        [InlineKeyboardButton("🎛 বড় কীবোর্ড বাটন ও সাব-মেনু বিল্ডার", callback_data="dyn_manage:0")],
-        [InlineKeyboardButton("📂 ফাইল হিস্ট্রি ও রিপোর্ট (Users Files)", callback_data="admin_file_history:0")],
-        [InlineKeyboardButton("💬 বাটন মেসেজ কন্ট্রোল (Add/Edit/Delete)", callback_data="admin_messages_menu")],
-        [InlineKeyboardButton("✏️ ডিফল্ট বাটন নাম এডিট", callback_data="admin_edit_buttons_menu")],
-        [InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ / আবর্জনা মুছুন", callback_data="admin_clear_cache")],
-        [InlineKeyboardButton("📢 Broadcast Post", callback_data="admin_broadcast"),
-         InlineKeyboardButton("✉️ Single Message", callback_data="admin_single_message")],
+        [
+            InlineKeyboardButton("👥 ইউজার ডিরেক্টরি", callback_data="admin_all_users:0"),
+            InlineKeyboardButton("👥 রেফারেল ট্র্যাকার", callback_data="admin_ref_tracker")
+        ],
+        [
+            InlineKeyboardButton("📂 ফাইল হিস্ট্রি ও রিপোর্ট", callback_data="admin_file_history:0"),
+            InlineKeyboardButton("➕ ম্যানুয়াল রেফার", callback_data="admin_add_ref_prompt")
+        ],
+        [
+            InlineKeyboardButton("🎛 বড় কীবোর্ড ও সাব-মেনু", callback_data="dyn_manage:0"),
+            InlineKeyboardButton("💬 বাটন মেসেজ কন্ট্রোল", callback_data="admin_messages_menu")
+        ],
+        [
+            InlineKeyboardButton("✏️ ডিফল্ট বাটন নাম এডিট", callback_data="admin_edit_buttons_menu"),
+            InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ", callback_data="admin_clear_cache")
+        ],
+        [
+            InlineKeyboardButton("📢 Broadcast Post", callback_data="admin_broadcast"),
+            InlineKeyboardButton("✉️ Single Message", callback_data="admin_single_message")
+        ],
         [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")]
     ]
 
@@ -1194,7 +1221,6 @@ async def show_admin_panel(query, user_id):
 admin_stage1_selections = {}
 admin_stage3_selections = {}
 
-
 def build_stage_keyboard(sub_id, emails, selected_indices, stage_num):
     rate = get_config("email_rate", float)
     num_buttons = []
@@ -1207,7 +1233,7 @@ def build_stage_keyboard(sub_id, emails, selected_indices, stage_num):
     if stage_num == 1:
         action_rows = [
             [InlineKeyboardButton(f"🚀 ধাপ ১ নিশ্চিত করুন ({len(selected_indices)}টি পর্যালোচনায় / {len(emails)-len(selected_indices)}টি বাতিল)", callback_data=f"sub_c1:{sub_id}")],
-            [InlineKeyboardButton("❌ পুরো ফাইল বাতিল (Reject All)", callback_data=f"sub_rj_all_prompt:{stage_num}:{sub_id}")]
+            [InlineKeyboardButton("❌ পুরো ফাইল বাতিল (Reject All)", callback_data=f"sub_rj_all_prompt:1:{sub_id}")]
         ]
     else:
         action_rows = [
@@ -1333,7 +1359,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
         
         if not wds:
-            await query.edit_message_text("💸 **আপনার কোনো উইথড্রয়াল হিস্ট্রি পাওয়া যায়নি।**\n\nআপনি টাকা উত্তোলন করলে তার লাইভ ও পূর্ববর্তী হিস্ট্রি এখানে দেখতে পাবেন।", reply_markup=back_kb, parse_mode="Markdown")
+            await query.edit_message_text("💸 **আপনার কোনো উইথড্রয়াল হিস্ট্রি পাওয়া যায়নি।**", reply_markup=back_kb, parse_mode="Markdown")
             return
 
         u_rate = get_config("usdt_rate", float)
@@ -1370,16 +1396,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")]
         ])
         await query.edit_message_text(
-            "📜 **আপনার হিস্ট্রি ক্যাটাগরি নির্বাচন করুন:**\n\n"
-            "নিচের যেকোনো অপশনে ক্লিক করে লাইভ বা পূর্বের তথ্য দেখুন:",
+            "📜 **আপনার হিস্ট্রি ক্যাটাগরি নির্বাচন করুন:**",
             reply_markup=hist_kb,
             parse_mode="Markdown"
         )
         return
 
-    # -------------------------------------------------------------
-    # এডমিন গার্ড
-    # -------------------------------------------------------------
     if not is_admin(user_id):
         return
 
@@ -1395,6 +1417,128 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "বট বন্ধ করা হয়েছে (ইউজাররা রক্ষণাবেক্ষণ নোটিশ পাবে)!" if new_state else "বট সফলভাবে চালু করা হয়েছে!"
         await query.answer(msg, show_alert=True)
         await show_admin_panel(query, user_id)
+
+    elif data == "admin_switches_menu":
+        buttons = [
+            ("sell", "📩 Sell Gmail"),
+            ("withdraw", "💸 Withdraw"),
+            ("referral", "👥 Referral"),
+            ("balance", "💰 Balance"),
+            ("history", "📜 History"),
+            ("rules", "📜 Rules"),
+            ("tutorial", "▶️ Tutorial"),
+            ("support", "📞 Support")
+        ]
+        kb = []
+        for b_key, b_title in buttons:
+            state_icon = "🟢 অন" if is_button_active(b_key) else "🔴 অফ"
+            kb.append([
+                InlineKeyboardButton(f"{b_title}: {state_icon}", callback_data=f"btn_switch_toggle:{b_key}"),
+                InlineKeyboardButton("✍️ নোটিশ এডিট", callback_data=f"btn_notice_edit_prompt:{b_key}")
+            ])
+        kb.append([InlineKeyboardButton("⬅️ Back to Panel", callback_data="admin_panel")])
+
+        await query.edit_message_text(
+            "🎛️ **বাটন কন্ট্রোল ও স্বাধীন সুইচ প্যানেল:**\n\n"
+            "যেকোনো বাটনের স্ট্যাটাস অন/অফ করতে ক্লিক করুন। বাটন অফ থাকলে ইউজাররা কী নোটিশ পাবে তা '✍️ নোটিশ এডিট' বাটন থেকে সেট করুন:",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("btn_switch_toggle:"):
+        b_key = data.split(":")[1]
+        new_st = toggle_button_switch(b_key)
+        status_txt = "চালু (Active)" if new_st else "বন্ধ (Disabled)"
+        await query.answer(f"বাটনটি {status_txt} করা হয়েছে!", show_alert=True)
+        query.data = "admin_switches_menu"
+        await button_handler(update, context)
+
+    elif data.startswith("btn_notice_edit_prompt:"):
+        b_key = data.split(":")[1]
+        context.user_data["editing_notice_bkey"] = b_key
+        context.user_data["state"] = "waiting_btn_notice_text"
+        current_n = get_button_closed_notice(b_key)
+        await query.edit_message_text(
+            f"✍️ **'{b_key.upper()}' বাটন অফ নোটিশ এডিট**\n\n"
+            f"📝 বর্তমান নোটিশ:\n`{current_n}`\n\n"
+            "👉 বাটন অফ থাকা অবস্থায় ইউজারদের জন্য নতুন নোটিশটি লিখে পাঠিয়ে দিন:\n(বাতিল করতে /cancel পাঠান)",
+            parse_mode="Markdown"
+        )
+
+    elif data == "adm_wizard_inbox_start":
+        context.user_data["state"] = "wizard_waiting_uid"
+        await query.edit_message_text(
+            "📥 **ইনবক্স ফাইল সাবমিশন উইজার্ড:**\n\n"
+            "যে ইউজার আপনাকে ইনবক্সে ফাইল পাঠিয়েছে, তার **টেলিগ্রাম ইউজার আইডি (Numeric ID)** লিখে পাঠান:\n\n"
+            "(বাতিল করতে /cancel পাঠান)",
+            parse_mode="Markdown"
+        )
+
+    elif data == "adm_clear_all_subs_prompt":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚠️ হ্যাঁ, সব ফাইল মুছুন", callback_data="adm_clear_all_subs_confirm")],
+            [InlineKeyboardButton("❌ বাতিল", callback_data="admin_file_history:0")]
+        ])
+        await query.edit_message_text(
+            "⚠️ **সতর্কতা: সকল সাবমিশন ফাইল হিস্ট্রি মুছে ফেলা!**\n\n"
+            "আপনি কি নিশ্চিত যে আপনি ডাটাবেজ থেকে অতীতের সকল ফাইলের হিস্ট্রি চিরতরে মুছে ফেলতে চান? এটি পুনরুদ্ধার করা সম্ভব হবে না।",
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+
+    elif data == "adm_clear_all_subs_confirm":
+        db_execute("DELETE FROM submissions")
+        db_execute("DELETE FROM submission_admin_messages")
+        await query.answer("সকল সাবমিশন ফাইল হিস্ট্রি সম্পূর্ণ মুছে ফেলা হয়েছে!", show_alert=True)
+        query.data = "admin_file_history:0"
+        await button_handler(update, context)
+
+    elif data.startswith("approve_withdraw:"):
+        owner = get_owner_id()
+        if not owner or int(user_id) != int(owner):
+            await query.answer("❌ শুধুমাত্র বটের মূল মালিক (Owner) উইথড্র অনুমোদন করতে পারেন!", show_alert=True)
+            return
+
+        w_id = int(data.split(":")[1])
+        w = db_execute("SELECT * FROM withdrawals WHERE id=%s", (w_id,), fetchone=True)
+        if not w or w["status"] != "pending":
+            return
+        bal = get_balance(w["user_id"])
+        if bal < float(w["amount"]):
+            db_execute("UPDATE withdrawals SET status='rejected' WHERE id=%s", (w_id,))
+            await query.edit_message_text("❌ পর্যাপ্ত ব্যালেন্স না থাকায় রিজেক্ট করা হলো।")
+            return
+        update_balance(w["user_id"], -float(w["amount"]))
+        db_execute("UPDATE withdrawals SET status='approved' WHERE id=%s", (w_id,))
+        u_rate = get_config("usdt_rate", float)
+        rec_bdt = float(w['receive_amount'])
+        rec_usdt = rec_bdt / u_rate if u_rate > 0 else 0
+        await query.edit_message_text(f"✅ Withdrawal Approved! পেমেন্ট: ৳{rec_bdt:.2f} (${rec_usdt:.2f})")
+        try:
+            msg = f"✅ উইথড্র সফল হয়েছে!\n💸 পেয়েছেন: ৳{rec_bdt:.2f} BDT"
+            if w["method"] == "Binance":
+                msg += f" (${rec_usdt:.2f} USDT)"
+            msg += f"\n💳 মেথড: {w['method']}\n📌 একাউন্ট/UID: {w['account']}"
+            await context.bot.send_message(chat_id=w["user_id"], text=msg)
+        except Exception:
+            pass
+
+    elif data.startswith("reject_withdraw:"):
+        owner = get_owner_id()
+        if not owner or int(user_id) != int(owner):
+            await query.answer("❌ শুধুমাত্র বটের মূল মালিক (Owner) উইথড্র বাতিল করতে পারেন!", show_alert=True)
+            return
+
+        w_id = int(data.split(":")[1])
+        w = db_execute("SELECT * FROM withdrawals WHERE id=%s", (w_id,), fetchone=True)
+        if not w or w["status"] != "pending":
+            return
+        db_execute("UPDATE withdrawals SET status='rejected' WHERE id=%s", (w_id,))
+        await query.edit_message_text(f"❌ Withdrawal #{w_id} Rejected.")
+        try:
+            await context.bot.send_message(chat_id=w["user_id"], text=f"❌ উইথড্রয়াল রিকোয়েস্ট (৳{w['amount']:.2f}) বাতিল করা হয়েছে।")
+        except Exception:
+            pass
 
     elif data == "admin_pending_files":
         subs = db_execute("SELECT * FROM submissions WHERE status IN ('pending', 'stage2_review') ORDER BY id DESC LIMIT 15", fetchall=True)
@@ -1426,8 +1570,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb.append([InlineKeyboardButton("📥 ধাপ ১: প্রাথমিক বাছাই শুরু করুন", callback_data=f"sub_s1_open:{sub_id}")])
             kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:1:{sub_id}")])
         elif sub["status"] == "stage2_review":
-            kb.append([InlineKeyboardButton("🔍 ধাপ ৩: চূড়ান্ত অনুমোদন শুরু করুন", callback_data=f"sub_s3_open:{sub_id}")],
-                      [InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")])
+            kb.append([InlineKeyboardButton("🔍 ধাপ ৩: চূড়ান্ত অনুমোদন শুরু করুন", callback_data=f"sub_s3_open:{sub_id}")])
+            kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")])
         kb.append([InlineKeyboardButton("⬅️ পেন্ডিং লিস্ট", callback_data="admin_pending_files")])
 
         await query.edit_message_text(
@@ -1440,281 +1584,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    elif data.startswith("admin_all_users:"):
-        users = get_all_users_list(limit=25)
-        if not users:
-            await query.edit_message_text("ℹ️ কোনো ইউজার পাওয়া যায়নি।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]]))
-            return
-
-        text = "👥 **সকল ইউজার তালিকা (সর্বশেষ ২৫ জন):**\n\n"
-        kb = []
-        for u in users:
-            u_id = u["user_id"]
-            bal = u["balance"]
-            chat_url = get_user_chat_url(u_id, u["username"])
-            text += f"🆔 `{u_id}` | ব্যালেন্স: ৳{bal:.2f}\n"
-            kb.append([InlineKeyboardButton(f"💬 চ্যাট ({u_id})", url=chat_url)])
-
-        kb.append([InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")])
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-    elif data == "admin_ref_tracker":
-        top = get_top_referrers()
-        if not top:
-            text = "ℹ️ এখনো কেউ রেফার করেনি।"
-        else:
-            text = "👥 **শীর্ষ রেফারেল ট্র্যাকার:**\n\n"
-            for r in top:
-                u_name = f"@{r['username']}" if r['username'] else "No Username"
-                text += f"👤 আইডি: `{r['user_id']}` ({u_name})\n"
-                text += f"   ┗ মোট রেফার: **{r['total_refs']}** (রিয়েল: {r['organic_count']}, ম্যানুয়াল: {r['manual_ref_count']})\n\n"
-            text += "💡 ইউজারের বিস্তারিত রেফার দেখতে চ্যাটে লিখুন:\n`/refinfo <user_id>`"
-
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
-        await query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
-
-    elif data == "admin_add_ref_prompt":
-        context.user_data["state"] = "waiting_add_ref_val"
-        await query.edit_message_text(
-            "➕ **ইউজারকে রেফার যোগ করুন:**\n\n"
-            "ফরম্যাট: `<user_id> <কত_রেফার_যোগ_করবেন>`\n"
-            "উদাহরণ: `123456789 5`\n\n(বাতিল করতে /cancel পাঠান)",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ বাতিল", callback_data="admin_panel")]]),
-            parse_mode="Markdown"
-        )
-
-    elif data == "admin_limits_menu":
-        min_w = get_config("min_withdraw", float)
-        w_fee = get_config("withdraw_fee_percent", float)
-        u_rate = get_config("usdt_rate", float)
-        ref_b = get_config("referral_bonus", float)
-        e_rate = get_config("email_rate", float)
-        d_lim = get_config("daily_file_limit", int)
-        m_lim = get_config("max_emails_per_file", int)
-        cd_days = get_config("duplicate_check_days", int)
-
-        kb = [
-            [InlineKeyboardButton(f"💵 জিমেইল রেট: ৳{e_rate:.2f}", callback_data="cfg_edit:email_rate"),
-             InlineKeyboardButton(f"💸 মিনিমাম উইথড্র: ৳{min_w:.2f}", callback_data="cfg_edit:min_withdraw")],
-            [InlineKeyboardButton(f"💳 উইথড্র ফি: {w_fee:.1f}%", callback_data="cfg_edit:withdraw_fee_percent"),
-             InlineKeyboardButton(f"💲 USDT রেট: ৳{u_rate:.2f}", callback_data="cfg_edit:usdt_rate")],
-            [InlineKeyboardButton(f"👥 রেফার বোনাস: ৳{ref_b:.2f}", callback_data="cfg_edit:referral_bonus"),
-             InlineKeyboardButton(f"📅 ডুপ্লিকেট কুলডাউন: {cd_days} দিন", callback_data="cfg_edit:duplicate_check_days")],
-            [InlineKeyboardButton(f"📁 দৈনিক ফাইল লিমিট: {d_lim} টি", callback_data="cfg_edit:daily_file_limit"),
-             InlineKeyboardButton(f"✉️ ফাইলে জিমেইল লিমিট: {m_lim} টি", callback_data="cfg_edit:max_emails_per_file")],
-            [InlineKeyboardButton("⬅️ Back to Panel", callback_data="admin_panel")]
-        ]
-        await query.edit_message_text("⚙️ **আর্থিক লেনদেন ও সিস্টেম লিমিট কন্ট্রোল:**\n\nযেটি পরিবর্তন করতে চান সেটিতে ক্লিক করুন:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-    elif data.startswith("cfg_edit:"):
-        cfg_key = data.split(":")[1]
-        context.user_data["editing_cfg_key"] = cfg_key
-        context.user_data["state"] = "waiting_cfg_val"
-        names = {
-            "min_withdraw": "মিনিমাম উইথড্র (টাকায়)",
-            "withdraw_fee_percent": "উইথড্র ফি (শতাংশে, যেমন 4 বা 5)",
-            "usdt_rate": "USDT ডলার রেট (টাকায়)",
-            "referral_bonus": "রেফারেল বোনাস (টাকায়)",
-            "email_rate": "প্রতি ভ্যালিড জিমেইল রেট (টাকায়)",
-            "daily_file_limit": "ইউজারের দৈনিক ফাইল লিমিট (সংখ্যা)",
-            "max_emails_per_file": "এক ফাইলে সর্বোচ্চ জিমেইল লিমিট (সংখ্যা)",
-            "duplicate_check_days": "ডুপ্লিকেট জিমেইল চেক দিন (সংখ্যা)"
-        }
-        await query.edit_message_text(f"✍️ **{names.get(cfg_key, cfg_key)}** এর নতুন মান লিখে পাঠিয়ে দিন:\n\n(বাতিল করতে /cancel পাঠান)")
-
-    elif data.startswith("dyn_manage:"):
-        p_id = int(data.split(":")[1])
-        btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=%s ORDER BY id ASC", (p_id,), fetchall=True)
-
-        kb = []
-        if btns:
-            for b in btns:
-                t_label = "🔗" if b["btn_type"] == "url" else "💬"
-                kb.append([InlineKeyboardButton(f"{t_label} {b['title']}", callback_data=f"dyn_item_opts:{b['id']}")])
-
-        kb.append([InlineKeyboardButton("➕ নতুন বাটন যোগ করুন (বড় কীবোর্ড)", callback_data=f"dyn_add_init:{p_id}")])
-        if p_id != 0:
-            parent_row = db_execute("SELECT parent_id FROM dynamic_buttons WHERE id=%s", (p_id,), fetchone=True)
-            prev_p = parent_row["parent_id"] if parent_row else 0
-            kb.append([InlineKeyboardButton("⬅️ আগের মেনুতে ফিরুন", callback_data=f"dyn_manage:{prev_p}")])
-        else:
-            kb.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")])
-
-        lvl_name = "মূল বড় কীবোর্ড (Main Keyboard)" if p_id == 0 else f"সাব-মেনু স্তর (Parent: {p_id})"
-        await query.edit_message_text(
-            f"🎛 **বড় কীবোর্ড বাটন ও সাব-মেনু বিল্ডার**\n📍 অবস্থান: {lvl_name}\n\n"
-            f"যেকোনো বাটনে ক্লিক করে সেটির সাব-বাটন তৈরি করতে পারেন অথবা ডিলিট করতে পারেন:",
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown"
-        )
-
-    elif data.startswith("dyn_item_opts:"):
-        b_id = int(data.split(":")[1])
-        b = db_execute("SELECT * FROM dynamic_buttons WHERE id=%s", (b_id,), fetchone=True)
-        if not b:
-            await query.answer("বাটন পাওয়া যায়নি!")
-            return
-
-        kb = [
-            [InlineKeyboardButton("➕ এর ভেতরে সাব-বাটন যোগ করুন", callback_data=f"dyn_add_init:{b['id']}")],
-            [InlineKeyboardButton("📂 এর সাব-বাটনগুলো দেখুন ও ম্যানেজ করুন", callback_data=f"dyn_manage:{b['id']}")],
-            [InlineKeyboardButton("🗑 শুধুমাত্র এই বাটনটি ডিলিট করুন", callback_data=f"dyn_del_one:{b['id']}")],
-            [InlineKeyboardButton("⬅️ তালিকায় ফিরুন", callback_data=f"dyn_manage:{b['parent_id']}")]
-        ]
-
-        desc = f"🔗 লিংক: `{b['content']}`" if b["btn_type"] == "url" else f"💬 বার্তা প্রিভিউ:\n`{b['content'][:150]}`"
-        await query.edit_message_text(
-            f"📌 **বাটন সেটিংস:** {b['title']}\n"
-            f"ধরন: {b['btn_type'].upper()}\n{desc}\n\n"
-            f"একটি অপশন নির্বাচন করুন:",
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown"
-        )
-
-    elif data.startswith("dyn_del_one:"):
-        b_id = int(data.split(":")[1])
-        b = db_execute("SELECT * FROM dynamic_buttons WHERE id=%s", (b_id,), fetchone=True)
-        if b:
-            parent_id = b["parent_id"]
-            db_execute("DELETE FROM dynamic_buttons WHERE id=%s", (b_id,))
-            await query.answer("বাটনটি সফলভাবে ডিলিট করা হয়েছে!", show_alert=True)
-            query.data = f"dyn_manage:{parent_id}"
-            await button_handler(update, context)
-
-    elif data.startswith("dyn_add_init:"):
-        p_id = int(data.split(":")[1])
-        context.user_data["dyn_parent_id"] = p_id
-        context.user_data["state"] = "dyn_waiting_title"
-        await query.edit_message_text("✍️ নতুন বাটনের নাম লিখে পাঠান (যেমন: 🎁 অফার বা 📚 ভিডিও গাইড):\n(বাতিল করতে /cancel পাঠান)")
-
-    elif data == "owner_manage_admins":
-        owner = get_owner_id()
-        if not owner or int(user_id) != int(owner):
-            await query.answer("❌ শুধুমাত্র মূল মালিকের এক্সেস আছে!", show_alert=True)
-            return
-
-        owner, helpers = get_all_admins()
-        if not helpers:
-            await query.edit_message_text(
-                "👥 **বর্তমানে কোনো সহযোগী অ্যাডমিন যুক্ত নেই।**\n\nনতুন অ্যাডমিন যোগ করতে চ্যাটে কমান্ড পাঠান:\n`/addadmin <user_id> [Admin_Name]`",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back to Panel", callback_data="admin_panel")]]),
-                parse_mode="Markdown"
-            )
-            return
-
-        kb = []
-        for h in helpers:
-            kb.append([InlineKeyboardButton(f"✏️ {h['admin_name']} (ID: {h['user_id']})", callback_data=f"edit_admin_name:{h['user_id']}")])
-
-        kb.append([InlineKeyboardButton("⬅️ Back to Panel", callback_data="admin_panel")])
-        await query.edit_message_text("👥 **যে অ্যাডমিনের নাম এডিট করতে চান তাকে নির্বাচন করুন:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-    elif data.startswith("edit_admin_name:"):
-        owner = get_owner_id()
-        if not owner or int(user_id) != int(owner):
-            return
-        target_helper_id = int(data.split(":")[1])
-        context.user_data["target_helper_id"] = target_helper_id
-        context.user_data["state"] = "waiting_helper_new_name"
-
-        current_n = get_admin_name(target_helper_id)
-        await query.edit_message_text(
-            f"👤 **অ্যাডমিন নাম পরিবর্তন**\n\n"
-            f"🆔 আইডি: `{target_helper_id}`\n"
-            f"বর্তমান নাম: **{current_n}**\n\n"
-            f"👉 নতুন যে নাম দিতে চান তা লিখে পাঠান (যেমন: Admin 1, Helper Joy):\n(বাতিল করতে /cancel পাঠান)",
-            parse_mode="Markdown"
-        )
-
-    elif data == "admin_clear_cache":
-        deleted = clear_junk_cache()
-        await query.answer(f"ক্যাশ ক্লিয়ার সম্পন্ন! {deleted}টি ফাইল মুছে ফেলা হয়েছে।", show_alert=True)
-        await show_admin_panel(query, user_id)
-
-    elif data == "admin_messages_menu":
-        keyboard = [
-            [InlineKeyboardButton(f"{v}", callback_data=f"msg_view:{k}")] for k, v in MESSAGE_NAMES.items()
-        ]
-        keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")])
-        await query.edit_message_text("💬 কোন বাটনের মেসেজ কাস্টমাইজ বা এডিট/ডিলিট করতে চান? নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data.startswith("msg_view:"):
-        msg_key = data.split(":")[1]
-        current_text = get_custom_msg(msg_key)
-        name = MESSAGE_NAMES.get(msg_key, msg_key)
-        preview = current_text if len(current_text) <= 300 else current_text[:300] + "..."
-
-        keyboard = [
-            [InlineKeyboardButton("✍️ নতুন মেসেজ লিখুন / Edit", callback_data=f"msg_set:{msg_key}")],
-            [InlineKeyboardButton("🗑 মেসেজ রিসেট / মুছুন (Default)", callback_data=f"msg_del:{msg_key}")],
-            [InlineKeyboardButton("⬅️ Back to Messages", callback_data="admin_messages_menu")]
-        ]
-        await query.edit_message_text(
-            f"📌 **বাটন:** {name}\n\n"
-            f"📝 **বর্তমান মেসেজ প্রিভিউ:**\n`{preview}`\n\n"
-            f"নিচের অপশন বেছে নিন:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-
-    elif data.startswith("msg_set:"):
-        msg_key = data.split(":")[1]
-        context.user_data["editing_msg_key"] = msg_key
-        context.user_data["state"] = "waiting_new_msg_text"
-        tips = "\n💡 নিচে বাটন যুক্ত করতে চাইলে লেখার শেষে দিন: `[বাটনের নাম | লিংক]`"
-        await query.edit_message_text(f"✍️ **{MESSAGE_NAMES.get(msg_key)}** বাটনের জন্য নতুন মেসেজটি লিখে পাঠিয়ে দিন:{tips}\n\n(ক্যানসেল করতে /cancel পাঠান)")
-
-    elif data.startswith("msg_del:"):
-        msg_key = data.split(":")[1]
-        delete_custom_msg(msg_key)
-        await query.answer("মেসেজ সফলভাবে রিসেট করা হয়েছে!", show_alert=True)
-        await show_admin_panel(query, user_id)
-
-    elif data == "admin_edit_buttons_menu":
-        keyboard = [
-            [InlineKeyboardButton("✏️ Sell বাটন", callback_data="edit_btn:sell"),
-             InlineKeyboardButton("✏️ Balance বাটন", callback_data="edit_btn:balance")],
-            [InlineKeyboardButton("✏️ Withdraw বাটন", callback_data="edit_btn:withdraw"),
-             InlineKeyboardButton("✏️ History বাটন", callback_data="edit_btn:history")],
-            [InlineKeyboardButton("✏️ Referral বাটন", callback_data="edit_btn:referral"),
-             InlineKeyboardButton("✏️ Rules বাটন", callback_data="edit_btn:rules")],
-            [InlineKeyboardButton("✏️ Tutorial বাটন", callback_data="edit_btn:tutorial"),
-             InlineKeyboardButton("✏️ Support বাটন", callback_data="edit_btn:support")],
-            [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
-        ]
-        await query.edit_message_text("✏️ কোন বাটনটির নাম পরিবর্তন করতে চান?", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data.startswith("edit_btn:"):
-        btn_key = data.split(":")[1]
-        context.user_data["editing_btn_key"] = btn_key
-        context.user_data["state"] = "waiting_new_button_title"
-        await query.edit_message_text(f"বাটনটির নতুন নাম লিখে পাঠান:\n(কী: {btn_key})")
-
-    elif data == "admin_broadcast":
-        context.user_data["state"] = "admin_broadcast"
-        await query.edit_message_text("📢 ব্রডকাস্ট মেসেজ লিখে পাঠান:\n\n(নিচে বাটন দিতে চাইলে লেখার সাথে `[বাটন | লিংক]` দিয়ে দিন)")
-
-    elif data == "admin_single_message":
-        context.user_data["state"] = "admin_single_user"
-        await query.edit_message_text("✉️ যাকে মেসেজ পাঠাবেন তার টেলিগ্রাম আইডি পাঠান:")
-
-    elif data == "admin_stats":
-        users = db_execute("SELECT COUNT(*) AS c FROM users", fetchone=True)["c"]
-        total_balance = db_execute("SELECT COALESCE(SUM(balance),0) AS total FROM users", fetchone=True)["total"]
-        u_rate = get_config("usdt_rate", float)
-        total_usdt = float(total_balance) / u_rate if u_rate > 0 else 0
-        pending = db_execute("SELECT COUNT(*) AS c FROM withdrawals WHERE status='pending'", fetchone=True)["c"]
-        pending_files = db_execute("SELECT COUNT(*) AS c FROM submissions WHERE status IN ('pending', 'stage2_review')", fetchone=True)["c"]
-
-        await query.edit_message_text(
-            f"📊 Admin Statistics\n\n"
-            f"👤 মোট ইউজার: {users}\n"
-            f"💰 মোট ব্যালেন্স: ৳{float(total_balance):.2f} BDT (${total_usdt:.2f} USDT)\n"
-            f"💸 পেন্ডিং উইথড্র: {pending}\n"
-            f"📁 চলমান ফাইল (পেন্ডিং/পর্যবেক্ষণে): {pending_files}",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
-        )
-
     elif data.startswith("admin_file_history:"):
         page = int(data.split(":")[1])
         limit = 5
@@ -1723,7 +1592,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_subs = db_execute("SELECT COUNT(*) AS c FROM submissions", fetchone=True)["c"]
 
         if not subs:
-            await query.edit_message_text("📂 কোনো সাবমিশন ফাইল পাওয়া যায়নি।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]]))
+            kb = [
+                [InlineKeyboardButton("➕ ইনবক্স ফাইল আপলোড", callback_data="adm_wizard_inbox_start")],
+                [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
+            ]
+            await query.edit_message_text("📂 কোনো সাবমিশন ফাইল পাওয়া যায়নি।", reply_markup=InlineKeyboardMarkup(kb))
             return
 
         kb = []
@@ -1741,6 +1614,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if nav_buttons:
             kb.append(nav_buttons)
+
+        kb.append([InlineKeyboardButton("🗑 সকল ফাইল হিস্ট্রি মুছুন (Clear All)", callback_data="adm_clear_all_subs_prompt")])
         kb.append([InlineKeyboardButton("⬅️ Back to Panel", callback_data="admin_panel")])
 
         await query.edit_message_text(f"📂 সকল ইউজারদের ফাইল তালিকা (মোট: {total_subs} টি):\nফাইল দেখতে ক্লিক করুন:", reply_markup=InlineKeyboardMarkup(kb))
@@ -2160,56 +2035,284 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         review_emails = json.loads(sub["in_review_json"])
         await finalize_stage3(context, query, sub_id, review_emails, [], user_id)
 
-    elif data.startswith("approve_withdraw:"):
-        owner = get_owner_id()
-        if not owner or int(user_id) != int(owner):
-            await query.answer("❌ শুধুমাত্র বটের মূল মালিক (Owner) উইথড্র অনুমোদন করতে পারেন!", show_alert=True)
+    elif data.startswith("admin_all_users:"):
+        users = get_all_users_list(limit=25)
+        if not users:
+            await query.edit_message_text("ℹ️ কোনো ইউজার পাওয়া যায়নি।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]]))
             return
 
-        w_id = int(data.split(":")[1])
-        w = db_execute("SELECT * FROM withdrawals WHERE id=%s", (w_id,), fetchone=True)
-        if not w or w["status"] != "pending":
-            return
-        bal = get_balance(w["user_id"])
-        if bal < float(w["amount"]):
-            db_execute("UPDATE withdrawals SET status='rejected' WHERE id=%s", (w_id,))
-            await query.edit_message_text("❌ পর্যাপ্ত ব্যালেন্স না থাকায় রিজেক্ট করা হলো।")
-            return
-        update_balance(w["user_id"], -float(w["amount"]))
-        db_execute("UPDATE withdrawals SET status='approved' WHERE id=%s", (w_id,))
+        text = "👥 **সকল ইউজার তালিকা (সর্বশেষ ২৫ জন):**\n\n"
+        kb = []
+        for u in users:
+            u_id = u["user_id"]
+            bal = u["balance"]
+            chat_url = get_user_chat_url(u_id, u["username"])
+            text += f"🆔 `{u_id}` | ব্যালেন্স: ৳{bal:.2f}\n"
+            kb.append([InlineKeyboardButton(f"💬 চ্যাট ({u_id})", url=chat_url)])
+
+        kb.append([InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    elif data == "admin_ref_tracker":
+        top = get_top_referrers()
+        if not top:
+            text = "ℹ️ এখনো কেউ রেফার করেনি।"
+        else:
+            text = "👥 **শীর্ষ রেফারেল ট্র্যাকার (ভেরিফায়েড):**\n\n"
+            for r in top:
+                u_name = f"@{r['username']}" if r['username'] else "No Username"
+                text += f"👤 আইডি: `{r['user_id']}` ({u_name})\n"
+                text += f"   ┗ মোট ভেরিফায়েড রেফার: **{r['total_refs']}** (রিয়েল: {r['organic_count']}, ম্যানুয়াল: {r['manual_ref_count']})\n\n"
+            text += "💡 ইউজারের বিস্তারিত রেফার দেখতে চ্যাটে লিখুন:\n`/refinfo <user_id>`"
+
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+
+    elif data == "admin_add_ref_prompt":
+        context.user_data["state"] = "waiting_add_ref_val"
+        await query.edit_message_text(
+            "➕ **ইউজারকে রেফার যোগ করুন:**\n\n"
+            "ফরম্যাট: `<user_id> <কত_রেফার_যোগ_করবেন>`\n"
+            "উদাহরণ: `123456789 5`\n\n(বাতিল করতে /cancel পাঠান)",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ বাতিল", callback_data="admin_panel")]]),
+            parse_mode="Markdown"
+        )
+
+    elif data == "admin_limits_menu":
+        min_w = get_config("min_withdraw", float)
+        w_fee = get_config("withdraw_fee_percent", float)
         u_rate = get_config("usdt_rate", float)
-        rec_bdt = float(w['receive_amount'])
-        rec_usdt = rec_bdt / u_rate if u_rate > 0 else 0
-        await query.edit_message_text(f"✅ Withdrawal Approved! পেমেন্ট: ৳{rec_bdt:.2f} (${rec_usdt:.2f})")
-        try:
-            msg = f"✅ উইথড্র সফল হয়েছে!\n💸 পেয়েছেন: ৳{rec_bdt:.2f} BDT"
-            if w["method"] == "Binance":
-                msg += f" (${rec_usdt:.2f} USDT)"
-            msg += f"\n💳 মেথড: {w['method']}\n📌 একাউন্ট/UID: {w['account']}"
-            await context.bot.send_message(chat_id=w["user_id"], text=msg)
-        except Exception:
-            pass
+        ref_b = get_config("referral_bonus", float)
+        e_rate = get_config("email_rate", float)
+        d_lim = get_config("daily_file_limit", int)
+        m_lim = get_config("max_emails_per_file", int)
+        cd_days = get_config("duplicate_check_days", int)
 
-    elif data.startswith("reject_withdraw:"):
+        kb = [
+            [InlineKeyboardButton(f"💵 জিমেইল রেট: ৳{e_rate:.2f}", callback_data="cfg_edit:email_rate"),
+             InlineKeyboardButton(f"💸 মিনিমাম উইথড্র: ৳{min_w:.2f}", callback_data="cfg_edit:min_withdraw")],
+            [InlineKeyboardButton(f"💳 উইথড্র ফি: {w_fee:.1f}%", callback_data="cfg_edit:withdraw_fee_percent"),
+             InlineKeyboardButton(f"💲 USDT রেট: ৳{u_rate:.2f}", callback_data="cfg_edit:usdt_rate")],
+            [InlineKeyboardButton(f"👥 রেফার বোনাস: ৳{ref_b:.2f}", callback_data="cfg_edit:referral_bonus"),
+             InlineKeyboardButton(f"📅 ডুপ্লিকেট কুলডাউন: {cd_days} দিন", callback_data="cfg_edit:duplicate_check_days")],
+            [InlineKeyboardButton(f"📁 দৈনিক ফাইল লিমিট: {d_lim} টি", callback_data="cfg_edit:daily_file_limit"),
+             InlineKeyboardButton(f"✉️ ফাইলে জিমেইল লিমিট: {m_lim} টি", callback_data="cfg_edit:max_emails_per_file")],
+            [InlineKeyboardButton("⬅️ Back to Panel", callback_data="admin_panel")]
+        ]
+        await query.edit_message_text("⚙️ **আর্থিক লেনদেন ও সিস্টেম লিমিট কন্ট্রোল:**\n\nযেটি পরিবর্তন করতে চান সেটিতে ক্লিক করুন:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    elif data.startswith("cfg_edit:"):
+        cfg_key = data.split(":")[1]
+        context.user_data["editing_cfg_key"] = cfg_key
+        context.user_data["state"] = "waiting_cfg_val"
+        names = {
+            "min_withdraw": "মিনিমাম উইথড্র (টাকায়)",
+            "withdraw_fee_percent": "উইথড্র ফি (শতাংশে, যেমন 4 বা 5)",
+            "usdt_rate": "USDT ডলার রেট (টাকায়)",
+            "referral_bonus": "রেফারেল বোনাস (টাকায়)",
+            "email_rate": "প্রতি ভ্যালিড জিমেইল রেট (টাকায়)",
+            "daily_file_limit": "ইউজারের দৈনিক ফাইল লিমিট (সংখ্যা)",
+            "max_emails_per_file": "এক ফাইলে সর্বোচ্চ জিমেইল লিমিট (সংখ্যা)",
+            "duplicate_check_days": "ডুপ্লিকেট জিমেইল চেক দিন (সংখ্যা)"
+        }
+        await query.edit_message_text(f"✍️ **{names.get(cfg_key, cfg_key)}** এর নতুন মান লিখে পাঠিয়ে দিন:\n\n(বাতিল করতে /cancel পাঠান)")
+
+    elif data.startswith("dyn_manage:"):
+        p_id = int(data.split(":")[1])
+        btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=%s ORDER BY id ASC", (p_id,), fetchall=True)
+
+        kb = []
+        if btns:
+            for b in btns:
+                t_label = "🔗" if b["btn_type"] == "url" else "💬"
+                kb.append([InlineKeyboardButton(f"{t_label} {b['title']}", callback_data=f"dyn_item_opts:{b['id']}")])
+
+        kb.append([InlineKeyboardButton("➕ নতুন বাটন যোগ করুন (বড় কীবোর্ড)", callback_data=f"dyn_add_init:{p_id}")])
+        if p_id != 0:
+            parent_row = db_execute("SELECT parent_id FROM dynamic_buttons WHERE id=%s", (p_id,), fetchone=True)
+            prev_p = parent_row["parent_id"] if parent_row else 0
+            kb.append([InlineKeyboardButton("⬅️ আগের মেনুতে ফিরুন", callback_data=f"dyn_manage:{prev_p}")])
+        else:
+            kb.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")])
+
+        lvl_name = "মূল বড় কীবোর্ড (Main Keyboard)" if p_id == 0 else f"সাব-মেনু স্তর (Parent: {p_id})"
+        await query.edit_message_text(
+            f"🎛 **বড় কীবোর্ড বাটন ও সাব-মেনু বিল্ডার**\n📍 অবস্থান: {lvl_name}\n\n"
+            f"যেকোনো বাটনে ক্লিক করে সেটির সাব-বাটন তৈরি করতে পারেন অথবা ডিলিট করতে পারেন:",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("dyn_item_opts:"):
+        b_id = int(data.split(":")[1])
+        b = db_execute("SELECT * FROM dynamic_buttons WHERE id=%s", (b_id,), fetchone=True)
+        if not b:
+            await query.answer("বাটন পাওয়া যায়নি!")
+            return
+
+        kb = [
+            [InlineKeyboardButton("➕ এর ভেতরে সাব-বাটন যোগ করুন", callback_data=f"dyn_add_init:{b['id']}")],
+            [InlineKeyboardButton("📂 এর সাব-বাটনগুলো দেখুন ও ম্যানেজ করুন", callback_data=f"dyn_manage:{b['id']}")],
+            [InlineKeyboardButton("🗑 শুধুমাত্র এই বাটনটি ডিলিট করুন", callback_data=f"dyn_del_one:{b['id']}")],
+            [InlineKeyboardButton("⬅️ তালিকায় ফিরুন", callback_data=f"dyn_manage:{b['parent_id']}")]
+        ]
+
+        desc = f"🔗 লিংক: `{b['content']}`" if b["btn_type"] == "url" else f"💬 বার্তা প্রিভিউ:\n`{b['content'][:150]}`"
+        await query.edit_message_text(
+            f"📌 **বাটন সেটিংস:** {b['title']}\n"
+            f"ধরন: {b['btn_type'].upper()}\n{desc}\n\n"
+            f"একটি অপশন নির্বাচন করুন:",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("dyn_del_one:"):
+        b_id = int(data.split(":")[1])
+        b = db_execute("SELECT * FROM dynamic_buttons WHERE id=%s", (b_id,), fetchone=True)
+        if b:
+            parent_id = b["parent_id"]
+            db_execute("DELETE FROM dynamic_buttons WHERE id=%s", (b_id,))
+            await query.answer("বাটনটি সফলভাবে ডিলিট করা হয়েছে!", show_alert=True)
+            query.data = f"dyn_manage:{parent_id}"
+            await button_handler(update, context)
+
+    elif data.startswith("dyn_add_init:"):
+        p_id = int(data.split(":")[1])
+        context.user_data["dyn_parent_id"] = p_id
+        context.user_data["state"] = "dyn_waiting_title"
+        await query.edit_message_text("✍️ নতুন বাটনের নাম লিখে পাঠান (যেমন: 🎁 অফার বা 📚 ভিডিও গাইড):\n(বাতিল করতে /cancel পাঠান)")
+
+    elif data == "owner_manage_admins":
         owner = get_owner_id()
         if not owner or int(user_id) != int(owner):
-            await query.answer("❌ শুধুমাত্র বটের মূল মালিক (Owner) উইথড্র বাতিল করতে পারেন!", show_alert=True)
+            await query.answer("❌ শুধুমাত্র মূল মালিকের এক্সেস আছে!", show_alert=True)
             return
 
-        w_id = int(data.split(":")[1])
-        w = db_execute("SELECT * FROM withdrawals WHERE id=%s", (w_id,), fetchone=True)
-        if not w or w["status"] != "pending":
+        owner, helpers = get_all_admins()
+        if not helpers:
+            await query.edit_message_text(
+                "👥 **বর্তমানে কোনো সহযোগী অ্যাডমিন যুক্ত নেই।**\n\nনতুন অ্যাডমিন যোগ করতে চ্যাটে কমান্ড পাঠান:\n`/addadmin <user_id> [Admin_Name]`",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back to Panel", callback_data="admin_panel")]]),
+                parse_mode="Markdown"
+            )
             return
-        db_execute("UPDATE withdrawals SET status='rejected' WHERE id=%s", (w_id,))
-        await query.edit_message_text(f"❌ Withdrawal #{w_id} Rejected.")
-        try:
-            await context.bot.send_message(chat_id=w["user_id"], text=f"❌ উইথড্রয়াল রিকোয়েস্ট (৳{w['amount']:.2f}) বাতিল করা হয়েছে।")
-        except Exception:
-            pass
+
+        kb = []
+        for h in helpers:
+            kb.append([InlineKeyboardButton(f"✏️ {h['admin_name']} (ID: {h['user_id']})", callback_data=f"edit_admin_name:{h['user_id']}")])
+
+        kb.append([InlineKeyboardButton("⬅️ Back to Panel", callback_data="admin_panel")])
+        await query.edit_message_text("👥 **যে অ্যাডমিনের নাম এডিট করতে চান তাকে নির্বাচন করুন:**", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    elif data.startswith("edit_admin_name:"):
+        owner = get_owner_id()
+        if not owner or int(user_id) != int(owner):
+            return
+        target_helper_id = int(data.split(":")[1])
+        context.user_data["target_helper_id"] = target_helper_id
+        context.user_data["state"] = "waiting_helper_new_name"
+
+        current_n = get_admin_name(target_helper_id)
+        await query.edit_message_text(
+            f"👤 **অ্যাডমিন নাম পরিবর্তন**\n\n"
+            f"🆔 আইডি: `{target_helper_id}`\n"
+            f"বর্তমান নাম: **{current_n}**\n\n"
+            f"👉 নতুন যে নাম দিতে চান তা লিখে পাঠান:\n(বাতিল করতে /cancel পাঠান)",
+            parse_mode="Markdown"
+        )
+
+    elif data == "admin_clear_cache":
+        deleted = clear_junk_cache()
+        await query.answer(f"ক্যাশ ক্লিয়ার সম্পন্ন! {deleted}টি ফাইল মুছে ফেলা হয়েছে।", show_alert=True)
+        await show_admin_panel(query, user_id)
+
+    elif data == "admin_messages_menu":
+        keyboard = [
+            [InlineKeyboardButton(f"{v}", callback_data=f"msg_view:{k}")] for k, v in MESSAGE_NAMES.items()
+        ]
+        keyboard.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")])
+        await query.edit_message_text("💬 কোন বাটনের মেসেজ কাস্টমাইজ বা এডিট/ডিলিট করতে চান? নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("msg_view:"):
+        msg_key = data.split(":")[1]
+        current_text = get_custom_msg(msg_key)
+        name = MESSAGE_NAMES.get(msg_key, msg_key)
+        preview = current_text if len(current_text) <= 300 else current_text[:300] + "..."
+
+        keyboard = [
+            [InlineKeyboardButton("✍️ নতুন মেসেজ লিখুন / Edit", callback_data=f"msg_set:{msg_key}")],
+            [InlineKeyboardButton("🗑 মেসেজ রিসেট / মুছুন (Default)", callback_data=f"msg_del:{msg_key}")],
+            [InlineKeyboardButton("⬅️ Back to Messages", callback_data="admin_messages_menu")]
+        ]
+        await query.edit_message_text(
+            f"📌 **বাটন:** {name}\n\n"
+            f"📝 **বর্তমান মেসেজ প্রিভিউ:**\n`{preview}`\n\n"
+            f"নিচের অপশন বেছে নিন:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("msg_set:"):
+        msg_key = data.split(":")[1]
+        context.user_data["editing_msg_key"] = msg_key
+        context.user_data["state"] = "waiting_new_msg_text"
+        tips = "\n💡 নিচে বাটন যুক্ত করতে চাইলে লেখার শেষে দিন: `[বাটনের নাম | লিংক]`"
+        await query.edit_message_text(f"✍️ **{MESSAGE_NAMES.get(msg_key)}** বাটনের জন্য নতুন মেসেজটি লিখে পাঠিয়ে দিন:{tips}\n\n(ক্যানসেল করতে /cancel পাঠান)")
+
+    elif data.startswith("msg_del:"):
+        msg_key = data.split(":")[1]
+        delete_custom_msg(msg_key)
+        await query.answer("মেসেজ সফলভাবে রিসেট করা হয়েছে!", show_alert=True)
+        await show_admin_panel(query, user_id)
+
+    elif data == "admin_edit_buttons_menu":
+        keyboard = [
+            [InlineKeyboardButton("✏️ Sell বাটন", callback_data="edit_btn:sell"),
+             InlineKeyboardButton("✏️ Balance বাটন", callback_data="edit_btn:balance")],
+            [InlineKeyboardButton("✏️ Withdraw বাটন", callback_data="edit_btn:withdraw"),
+             InlineKeyboardButton("✏️ History বাটন", callback_data="edit_btn:history")],
+            [InlineKeyboardButton("✏️ Referral বাটন", callback_data="edit_btn:referral"),
+             InlineKeyboardButton("✏️ Rules বাটন", callback_data="edit_btn:rules")],
+            [InlineKeyboardButton("✏️ Tutorial বাটন", callback_data="edit_btn:tutorial"),
+             InlineKeyboardButton("✏️ Support বাটন", callback_data="edit_btn:support")],
+            [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
+        ]
+        await query.edit_message_text("✏️ কোন বাটনটির নাম পরিবর্তন করতে চান?", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("edit_btn:"):
+        btn_key = data.split(":")[1]
+        context.user_data["editing_btn_key"] = btn_key
+        context.user_data["state"] = "waiting_new_button_title"
+        await query.edit_message_text(f"বাটনটির নতুন নাম লিখে পাঠান:\n(কী: {btn_key})")
+
+    elif data == "admin_broadcast":
+        context.user_data["state"] = "admin_broadcast"
+        await query.edit_message_text("📢 ব্রডকাস্ট মেসেজ লিখে পাঠান:\n\n(নিচে বাটন দিতে চাইলে লেখার সাথে `[বাটন | লিংক]` দিয়ে দিন)")
+
+    elif data == "admin_single_message":
+        context.user_data["state"] = "admin_single_user"
+        await query.edit_message_text("✉️ যাকে মেসেজ পাঠাবেন তার টেলিগ্রাম আইডি পাঠান:")
+
+    elif data == "admin_stats":
+        users = db_execute("SELECT COUNT(*) AS c FROM users", fetchone=True)["c"]
+        total_balance = db_execute("SELECT COALESCE(SUM(balance),0) AS total FROM users", fetchone=True)["total"]
+        u_rate = get_config("usdt_rate", float)
+        total_usdt = float(total_balance) / u_rate if u_rate > 0 else 0
+        pending = db_execute("SELECT COUNT(*) AS c FROM withdrawals WHERE status='pending'", fetchone=True)["c"]
+        pending_files = db_execute("SELECT COUNT(*) AS c FROM submissions WHERE status IN ('pending', 'stage2_review')", fetchone=True)["c"]
+
+        await query.edit_message_text(
+            f"📊 Admin Statistics\n\n"
+            f"👤 মোট ইউজার: {users}\n"
+            f"💰 মোট ব্যালেন্স: ৳{float(total_balance):.2f} BDT (${total_usdt:.2f} USDT)\n"
+            f"💸 পেন্ডিং উইথড্র: {pending}\n"
+            f"📁 চলমান ফাইল (পেন্ডিং/পর্যবেক্ষণে): {pending_files}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]])
+        )
 
 
 # =========================================================
-# FINALIZATION LOGICS (DETAILED ADMIN BROADCASTS)
+# FINALIZATION LOGICS (INCL. CONDITIONAL REFERRAL REWARD)
 # =========================================================
 
 async def finalize_stage1(context, query, sub_id, in_review_emails, rejected_items, admin_user_id):
@@ -2301,6 +2404,27 @@ async def finalize_stage3(context, query, sub_id, accepted_emails, rejected_item
 
     if total_acc > 0:
         update_balance(sub["user_id"], reward)
+
+        u_info = get_user(sub["user_id"])
+        if u_info and u_info.get("referred_by") and u_info.get("ref_bonus_rewarded") == 0:
+            referrer_id = u_info["referred_by"]
+            ref_bonus = get_config("referral_bonus", float)
+            
+            update_balance(referrer_id, ref_bonus)
+            db_execute("UPDATE users SET ref_bonus_rewarded=1 WHERE user_id=%s", (sub["user_id"],))
+
+            try:
+                await context.bot.send_message(
+                    chat_id=referrer_id,
+                    text=(
+                        f"🎉 **অভিনন্দন! আপনার রেফারেল সফল হয়েছে!**\n\n"
+                        f"আপনার লিংক দিয়ে যুক্ত হওয়া একজন ইউজার তার প্রথম জিমেইল সফলভাবে জমা দিয়ে অ্যাপ্রুভ পেয়েছেন!\n"
+                        f"💰 আপনার অ্যাকাউন্টে রেফার বোনাস যোগ হয়েছে: **+৳{ref_bonus:.2f} BDT**"
+                    ),
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
 
     admin_stage3_selections.pop(sub_id, None)
     approver = get_admin_name(admin_user_id)
@@ -2439,6 +2563,130 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("বাতিল করা হয়েছে।")
         return
 
+    if is_admin(user.id) and state == "wizard_waiting_uid":
+        if not text.isdigit():
+            await update.message.reply_text("❌ সঠিক সংখ্যায় টেলিগ্রাম আইডি দিন। (যেমন: `123456789`)")
+            return
+        target_uid = int(text)
+        t_user = get_user(target_uid)
+        if not t_user:
+            await update.message.reply_text("❌ এই ইউজার আইডি বট ডাটাবেজে পাওয়া যায়নি! ইউজারকে বটে অন্তত একবার /start দিতে হবে।")
+            return
+
+        context.user_data["wizard_target_uid"] = target_uid
+        context.user_data["state"] = "wizard_waiting_file"
+        await update.message.reply_text(
+            f"✅ ইউজার শনাক্ত হয়েছে: `{target_uid}`\n\n"
+            "এবার ইউজারের পাঠানো এক্সেল বা সিএসভি ফাইলটি (.xlsx, .csv) এখানে পাঠিয়ে দিন:\n(বাতিল করতে /cancel পাঠান)",
+            parse_mode="Markdown"
+        )
+        return
+
+    if is_admin(user.id) and state == "wizard_waiting_file":
+        doc = update.message.document
+        if not doc:
+            await update.message.reply_text("❌ অনুগ্রহ করে ইউজারের এক্সেল বা সিএসভি ফাইল (.xlsx, .csv) পাঠান।")
+            return
+
+        fn = doc.file_name.lower()
+        if not (fn.endswith(".xlsx") or fn.endswith(".xls") or fn.endswith(".csv")):
+            await update.message.reply_text("❌ শুধুমাত্র Excel বা CSV ফাইল সাপোর্টেড।")
+            return
+
+        target_uid = context.user_data.get("wizard_target_uid")
+        target_user = get_user(target_uid)
+
+        os.makedirs("downloads", exist_ok=True)
+        local_path = os.path.join("downloads", f"wiz_{target_uid}_{doc.file_name}")
+        tg_file = await doc.get_file()
+        await tg_file.download_to_drive(local_path)
+
+        try:
+            valid_emails = validate_gmail_file(local_path)
+        except Exception as e:
+            if os.path.exists(local_path):
+                os.remove(local_path)
+            await update.message.reply_text(f"❌ ফাইল পড়তে সমস্যা হয়েছে: {e}")
+            return
+
+        if os.path.exists(local_path):
+            os.remove(local_path)
+
+        if not valid_emails:
+            await update.message.reply_text("❌ ফাইলে কোনো ভ্যালিড @gmail.com পাওয়া যায়নি!")
+            return
+
+        save_submitted_emails(valid_emails)
+        emails_json = json.dumps(valid_emails)
+
+        db_execute("""
+            INSERT INTO submissions (user_id, file_id, emails_json, status, created_at)
+            VALUES (%s, %s, %s, 'pending', %s)
+        """, (target_uid, doc.file_id, emails_json, datetime.now().isoformat()))
+
+        last_sub = db_execute("SELECT id FROM submissions WHERE user_id=%s ORDER BY id DESC LIMIT 1", (target_uid,), fetchone=True)
+        sub_id = last_sub["id"] if last_sub else 1
+        increase_file_count(target_uid)
+        context.user_data.clear()
+
+        await update.message.reply_text(
+            f"🎉 **ইনবক্স ফাইল সফলভাবে ৩-ধাপ সিস্টেমে যুক্ত হয়েছে!**\n\n"
+            f"📁 ফাইল আইডি: `#{sub_id}`\n"
+            f"👤 ইউজার: `{target_uid}`\n"
+            f"✉️ মোট জিমেইল: {len(valid_emails)} টি\n\n"
+            f"ইউজারকে নোটিফিকেশন পাঠানো হয়েছে এবং সকল অ্যাডমিনের কাছে ফাইল পৌঁছেছে।",
+            parse_mode="Markdown"
+        )
+
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text=(
+                    f"📥 **আপনার ফাইল অ্যাডমিন কর্তৃক সিস্টেমে যুক্ত করা হয়েছে!**\n\n"
+                    f"📁 ফাইল আইডি: `#{sub_id}`\n"
+                    f"✉️ মোট ভ্যালিড Gmail: {len(valid_emails)} টি\n"
+                    f"⚡ স্ট্যাটাস: 🟡 নতুন জমা (পর্যালোচনার অপেক্ষায়)\n\n"
+                    f"আপনি বটের '📜 হিস্ট্রি' বাটনে চাপ দিয়ে লাইভ অগ্রগতি দেখতে পারবেন।"
+                ),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+        await dispatch_submission_to_admins(context, sub_id, target_uid, target_user["username"], doc.file_id, valid_emails)
+        return
+
+    if is_admin(user.id) and state == "waiting_btn_notice_text":
+        b_key = context.user_data.get("editing_notice_bkey")
+        if text:
+            set_config(f"notice_{b_key}", text)
+            context.user_data.clear()
+            await update.message.reply_text(
+                f"✅ **'{b_key.upper()}'** বাটনের অফ নোটিশ সফলভাবে সেভ হয়েছে!\n\n"
+                f"📝 নতুন নোটিশ:\n`{text}`",
+                parse_mode="Markdown"
+            )
+        return
+
+    if not is_admin(user.id):
+        button_switch_pairs = [
+            (btn_sell, "sell"),
+            (btn_bal, "balance"),
+            (btn_wd, "withdraw"),
+            (btn_hist, "history"),
+            (btn_ref, "referral"),
+            (btn_rules, "rules"),
+            (btn_tut, "tutorial"),
+            (btn_sup, "support")
+        ]
+        for b_title, b_key in button_switch_pairs:
+            if text == b_title or (b_key == "sell" and "SELL FRESH GMAIL ACCOUNT" in text) or (b_key == "tutorial" and "TUTORIAL" in text.upper()):
+                if not is_button_active(b_key):
+                    notice = get_button_closed_notice(b_key)
+                    clean_n, n_kb = parse_text_and_buttons(notice)
+                    await update.message.reply_text(clean_n, reply_markup=n_kb, parse_mode="Markdown")
+                    return
+
     if is_admin(user.id) and state == "waiting_custom_reason_text":
         info = context.user_data.get("custom_reason_info")
         flow = context.user_data.get("pending_rejection_flow")
@@ -2466,7 +2714,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 rejected_items = [(em, flow["reasons"].get(em, "Invalid")) for em in flow["rejected_list"]]
-                
                 class DummyQuery:
                     def __init__(self, c_id, m_id):
                         self.chat_id = c_id
@@ -2690,7 +2937,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 YOUR ACCOUNT BALANCE\n\n"
             f"🔹 BDT Balance: ৳{b_bdt:.2f} BDT\n"
             f"🔹 USDT Balance: ${b_usdt:.2f} USDT\n"
-            f"👥 Total Referrals: {refs} users"
+            f"👥 Total Referrals (Verified): {refs} users"
         )
         return
 
@@ -2729,8 +2976,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = (
             f"{clean_r}\n\n"
             f"📊 আপনার রেফারেল পরিসংখ্যান:\n"
-            f"🔹 মোট রেফার: {refs} জন\n"
-            f"🔹 মোট আয়: ৳{earned:.2f} BDT"
+            f"🔹 ভেরিফায়েড সফল রেফার: {refs} জন\n"
+            f"🔹 মোট অর্জিত আয়: ৳{earned:.2f} BDT"
         )
         await update.message.reply_text(msg, reply_markup=r_kb, parse_mode="Markdown")
         return
@@ -2828,10 +3075,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         owner_id = get_owner_id()
         if owner_id:
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Approve", callback_data=f"approve_withdraw:{w_id}"),
-                 InlineKeyboardButton("❌ Reject", callback_data=f"reject_withdraw:{w_id}")]
+            deep_link = build_payment_deep_link(method, text, rec)
+            action_buttons = []
+            if deep_link:
+                action_buttons.append([InlineKeyboardButton(f"📲 Pay via {method} App (Click-to-Pay)", url=deep_link)])
+            action_buttons.append([
+                InlineKeyboardButton("✅ Approve", callback_data=f"approve_withdraw:{w_id}"),
+                InlineKeyboardButton("❌ Reject", callback_data=f"reject_withdraw:{w_id}")
             ])
+            keyboard = InlineKeyboardMarkup(action_buttons)
             try:
                 await context.bot.send_message(
                     chat_id=int(owner_id),
@@ -2841,7 +3093,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"💰 তোলার পরিমাণ: ৳{amt:.2f} BDT\n"
                         f"💸 পেমেন্ট দিতে হবে: ৳{rec:.2f} (${rec_usdt:.2f})\n"
                         f"💳 মেথড: {method}\n"
-                        f"📌 অ্যাকাউন্ট/UID: `{text}`"
+                        f"📌 অ্যাকাউন্ট/UID: `{text}`\n\n"
+                        f"💡 'Click-to-Pay' বাটনে চাপ দিলে সরাসরি {method} অ্যাপে নম্বর ও অ্যামাউন্ট বসে যাবে।"
                     ),
                     reply_markup=keyboard,
                     parse_mode="Markdown"
@@ -2962,16 +3215,17 @@ async def refinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_c = get_referral_count(target_id)
 
     res_text = f"📊 **রেফারেল হিস্ট্রি:** `{target_id}`\n"
-    res_text += f"মোট রেফার: **{total_c}** (অর্গানিক: {len(refs) if refs else 0}, ম্যানুয়াল: {u.get('manual_ref_count', 0)})\n\n"
+    res_text += f"মোট ভেরিফায়েড রেফার: **{total_c}** (অর্গানিক ভেরিফায়েড: {len([r for r in refs if r['ref_bonus_rewarded']==1]) if refs else 0}, ম্যানুয়াল: {u.get('manual_ref_count', 0)})\n\n"
 
     if not refs:
-        res_text += "ℹ️ অর্গানিক কোনো ইউজার এখনো তার লিংকে জয়েন করেনি।"
+        res_text += "ℹ️ এই ইউজারের লিংকে এখনো কেউ জয়েন করেনি।"
     else:
         res_text += "📋 **রেফার করা ইউজারদের তালিকা:**\n"
         for r in refs[:30]:
             un = f"@{r['username']}" if r['username'] else "No username"
+            st = "🟢 ভেরিফায়েড (কাজ সম্পন্ন)" if r.get('ref_bonus_rewarded') == 1 else "🟡 পেন্ডিং (এখনো ফাইল সম্পন্ন করেনি)"
             dt = r['created_at'][:10] if r['created_at'] else "N/A"
-            res_text += f"• `{r['user_id']}` ({un}) - {dt}\n"
+            res_text += f"• `{r['user_id']}` ({un}) - {st} ({dt})\n"
 
     await update.message.reply_text(res_text, parse_mode="Markdown")
 
