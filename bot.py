@@ -193,7 +193,7 @@ def init_db():
 
 
 # =========================================================
-# CONFIG HELPERS & VISIBILITY SWITCHES
+# CONFIG HELPERS & SWITCH CACHE
 # =========================================================
 
 CONFIG_DEFAULTS = {
@@ -206,7 +206,16 @@ CONFIG_DEFAULTS = {
     "max_emails_per_file": "5",
     "duplicate_check_days": "3",
     "maintenance": "0",
-    # বাটন সুইচ ও দৃশ্যমানতা (1 = On/Visible, 0 = Off/Hidden)
+    # বাটন অন/অফ সুইচ (1 = Active/On, 0 = Disabled/Off)
+    "switch_sell": "1",
+    "switch_withdraw": "1",
+    "switch_referral": "1",
+    "switch_balance": "1",
+    "switch_history": "1",
+    "switch_rules": "1",
+    "switch_tutorial": "1",
+    "switch_support": "1",
+    # বড় কিবোর্ডে ভিজিবিলিটি (1 = Visible, 0 = Hidden)
     "show_btn_sell": "1",
     "show_btn_balance": "1",
     "show_btn_withdraw": "1",
@@ -215,6 +224,15 @@ CONFIG_DEFAULTS = {
     "show_btn_rules": "1",
     "show_btn_tutorial": "1",
     "show_btn_support": "1",
+    # বাটন অফ নোটিশ
+    "notice_sell": "⚠️ বর্তমানে আমাদের জিমেইল ফাইল রিসিভ কার্যক্রম সাময়িকভাবে বন্ধ আছে। পরবর্তীতে খোলার সময় নোটিশের মাধ্যমে জানিয়ে দেওয়া হবে।",
+    "notice_withdraw": "⚠️ বর্তমানে পেমেন্ট ও উইথড্র সিস্টেম সাময়িকভাবে মেইনটেন্যান্সে রয়েছে। খুব শীঘ্রই চালু হবে।",
+    "notice_referral": "⚠️ রেফারেল সিস্টেম সাময়িকভাবে স্থগিত রয়েছে।",
+    "notice_balance": "⚠️ ব্যালেন্স সার্ভারে কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।",
+    "notice_history": "⚠️ হিস্ট্রি রেকর্ড বর্তমানে আপডেট করা হচ্ছে।",
+    "notice_rules": "⚠️ নিয়মাবলী সেকশন বর্তমানে আপডেট হচ্ছে।",
+    "notice_tutorial": "⚠️ টিউটোরিয়াল ভিডিও শীঘ্রই নতুন নিয়মে আপডেট করা হবে।",
+    "notice_support": "⚠️ সাপোর্ট টিম বর্তমানে ব্যস্ত রয়েছে। অনুগ্রহ করে কিছুক্ষণ পর মেসেজ দিন।"
 }
 
 CONFIG_CACHE = {}
@@ -243,6 +261,21 @@ def set_config(key, val):
         INSERT INTO settings (key, value) VALUES (%s, %s)
         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value
     """, (key, str(val)))
+
+def is_button_active(btn_key):
+    return get_config(f"switch_{btn_key}", int) == 1
+
+def toggle_button_switch(btn_key):
+    cur = is_button_active(btn_key)
+    new_val = 0 if cur else 1
+    set_config(f"switch_{btn_key}", new_val)
+    return new_val == 1
+
+def get_button_closed_notice(btn_key):
+    res = db_execute("SELECT value FROM settings WHERE key=%s", (f"notice_{btn_key}",), fetchone=True)
+    if res and res["value"]:
+        return res["value"]
+    return CONFIG_DEFAULTS.get(f"notice_{btn_key}", "⚠️ এই অপশনটি বর্তমানে সাময়িকভাবে বন্ধ আছে।")
 
 def is_button_visible(btn_key):
     return get_config(f"show_btn_{btn_key}", int) == 1
@@ -692,7 +725,6 @@ def save_submitted_emails(emails):
 def get_bottom_keyboard(user_id=None):
     keyboard = []
 
-    # বাটন ভিজিবিলিটি চেক করে কিবোর্ডে যোগ করা
     if is_button_visible("sell"):
         btn_sell = get_button_title("sell", "📩 SELL FRESH GMAIL ACCOUNT")
         keyboard.append([KeyboardButton(btn_sell)])
@@ -725,7 +757,6 @@ def get_bottom_keyboard(user_id=None):
         btn_sup = get_button_title("support", "📞 SUPPORT")
         keyboard.append([KeyboardButton(btn_sup)])
 
-    # কাস্টম ডাইনামিক বাটন
     custom_reply_btns = db_execute("SELECT title FROM dynamic_buttons WHERE parent_id=0 AND show_in_reply=1 ORDER BY id ASC", fetchall=True)
     if custom_reply_btns:
         row = []
@@ -737,7 +768,6 @@ def get_bottom_keyboard(user_id=None):
         if row:
             keyboard.append(row)
 
-    # শুধুমাত্র ওনার এবং সহযোগী অ্যাডমিনদের বড় কিবোর্ডে "🔐 ADMIN PANEL" বাটন যুক্ত করা
     if user_id and is_admin(user_id):
         keyboard.append([KeyboardButton("🔐 ADMIN PANEL")])
 
@@ -1168,29 +1198,30 @@ async def show_admin_panel(query, user_id):
             InlineKeyboardButton("📨 পেন্ডিং ফাইলস", callback_data="admin_pending_files")
         ],
         [
-            InlineKeyboardButton("✏️ ডিফল্ট বাটন এডিট ও প্রদর্শন", callback_data="admin_default_btns_menu"),
-            InlineKeyboardButton("⚙️ আর্থিক লেনদেন ও লিমিট", callback_data="admin_limits_menu")
+            InlineKeyboardButton("🎛️ বাটন কন্ট্রোল ও সুইচ", callback_data="admin_switches_menu"),
+            InlineKeyboardButton("✏️ কিবোর্ড ভিজিবিলিটি ও নাম এডিট", callback_data="admin_default_btns_menu")
         ],
         [
-            InlineKeyboardButton("👥 ইউজার ডিরেক্টরি", callback_data="admin_all_users:0"),
-            InlineKeyboardButton("👥 রেফারেল ট্র্যাকার", callback_data="admin_ref_tracker")
+            InlineKeyboardButton("⚙️ আর্থিক লেনদেন ও লিমিট", callback_data="admin_limits_menu"),
+            InlineKeyboardButton("👥 ইউজার ডিরেক্টরি", callback_data="admin_all_users:0")
         ],
         [
-            InlineKeyboardButton("📂 ফাইল হিস্ট্রি ও রিপোর্ট", callback_data="admin_file_history:0"),
+            InlineKeyboardButton("👥 রেফারেল ট্র্যাকার", callback_data="admin_ref_tracker"),
             InlineKeyboardButton("➕ ম্যানুয়াল রেফার", callback_data="admin_add_ref_prompt")
         ],
         [
-            InlineKeyboardButton("🎛 বড় কীবোর্ড ও সাব-মেনু", callback_data="dyn_manage:0"),
-            InlineKeyboardButton("💬 বাটন মেসেজ কন্ট্রোল", callback_data="admin_messages_menu")
+            InlineKeyboardButton("📂 ফাইল হিস্ট্রি ও রিপোর্ট", callback_data="admin_file_history:0"),
+            InlineKeyboardButton("🎛 বড় কীবোর্ড ও সাব-মেনু", callback_data="dyn_manage:0")
         ],
         [
-            InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ", callback_data="admin_clear_cache"),
-            InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")
+            InlineKeyboardButton("💬 বাটন মেসেজ কন্ট্রোল", callback_data="admin_messages_menu"),
+            InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ", callback_data="admin_clear_cache")
         ],
         [
             InlineKeyboardButton("📢 Broadcast Post", callback_data="admin_broadcast"),
             InlineKeyboardButton("✉️ Single Message", callback_data="admin_single_message")
-        ]
+        ],
+        [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")]
     ]
 
     if is_owner:
@@ -1254,7 +1285,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
-    # মেসেজ মুছে ফেলার বাটন (Dismiss / Back)
     if data == "dismiss_msg":
         try:
             await query.message.delete()
@@ -1429,7 +1459,60 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_admin_panel(query, user_id)
 
     # -------------------------------------------------------------
-    # ডিফল্ট বাটন এডিট, রিমুভ ও প্রদর্শন মেনু
+    # বাটন কন্ট্রোল ও সুইচ (ON/OFF & NOTICE)
+    # -------------------------------------------------------------
+    elif data == "admin_switches_menu":
+        buttons = [
+            ("sell", "📩 Sell Gmail"),
+            ("withdraw", "💸 Withdraw"),
+            ("referral", "👥 Referral"),
+            ("balance", "💰 Balance"),
+            ("history", "📜 History"),
+            ("rules", "📜 Rules"),
+            ("tutorial", "▶️ Tutorial"),
+            ("support", "📞 Support")
+        ]
+        kb = []
+        for b_key, b_title in buttons:
+            state_icon = "🟢 অন (Active)" if is_button_active(b_key) else "🔴 অফ (Closed)"
+            kb.append([
+                InlineKeyboardButton(f"{b_title}: {state_icon}", callback_data=f"btn_switch_toggle:{b_key}"),
+                InlineKeyboardButton("✍️ নোটিশ এডিট", callback_data=f"btn_notice_edit_prompt:{b_key}")
+            ])
+        kb.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")])
+
+        await query.edit_message_text(
+            "🎛️ **বাটন কন্ট্রোল ও স্বাধীন সুইচ প্যানেল:**\n\n"
+            "যেকোনো বাটনের কার্যকারিতা অন/অফ করতে ক্লিক করুন। বাটন অফ থাকলে ইউজাররা যে নোটিশ পাবে তা '✍️ নোটিশ এডিট' বাটন থেকে সেট করুন:\n\n"
+            "💡 *টিপস: নোটিশের নিচে লিংক বাটন যুক্ত করতে লেখার শেষে দিন:* `[বাটন | লিংক]`",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("btn_switch_toggle:"):
+        b_key = data.split(":")[1]
+        new_st = toggle_button_switch(b_key)
+        status_txt = "চালু (Active)" if new_st else "বন্ধ (Disabled)"
+        await query.answer(f"বাটনটি {status_txt} করা হয়েছে!", show_alert=True)
+        query.data = "admin_switches_menu"
+        await button_handler(update, context)
+
+    elif data.startswith("btn_notice_edit_prompt:"):
+        b_key = data.split(":")[1]
+        context.user_data["editing_notice_bkey"] = b_key
+        context.user_data["state"] = "waiting_btn_notice_text"
+        current_n = get_button_closed_notice(b_key)
+        await query.edit_message_text(
+            f"✍️ **'{b_key.upper()}' বাটন অফ নোটিশ এডিট**\n\n"
+            f"📝 বর্তমান নোটিশ:\n`{current_n}`\n\n"
+            "👉 বাটন অফ থাকা অবস্থায় ইউজারদের জন্য নতুন নোটিশটি লিখে পাঠিয়ে দিন:\n"
+            "💡 বাটন দিতে চাইলে লেখার শেষে লিখুন: `[বাটনের নাম | লিংক]`\n\n"
+            "(বাতিল করতে /cancel পাঠান)",
+            parse_mode="Markdown"
+        )
+
+    # -------------------------------------------------------------
+    # ডিফল্ট বাটন কিবোর্ড ভিজিবিলিটি (HIDE/REMOVE) ও নাম এডিট
     # -------------------------------------------------------------
     elif data == "admin_default_btns_menu":
         btn_items = [
@@ -1445,14 +1528,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = []
         for b_key, b_label in btn_items:
             vis = is_button_visible(b_key)
-            vis_text = "👁️ দৃশ্যমান (On)" if vis else "🗑️ রিমুভ/হাইড (Off)"
+            vis_text = "👁️ কিবোর্ডে আছে" if vis else "🗑️ কিবোর্ড থেকে হাইড"
             kb.append([
                 InlineKeyboardButton(f"{b_label}: {vis_text}", callback_data=f"toggle_vis:{b_key}"),
                 InlineKeyboardButton("✏️ নাম এডিট", callback_data=f"edit_btn:{b_key}")
             ])
         kb.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")])
         await query.edit_message_text(
-            "✏️ **ডিফল্ট বাটন কন্ট্রোল প্যানেল:**\n\n"
+            "✏️ **কিবোর্ড ভিজিবিলিটি ও নাম এডিট প্যানেল:**\n\n"
             "• যেকোনো বাটনে চাপ দিয়ে বড় কিবোর্ড থেকে তা **হাইড/রিমুভ** করতে পারেন বা আবার ফিরিয়ে আনতে পারেন।\n"
             "• '✏️ নাম এডিট' চেপে বাটনের নাম পরিবর্তন করতে পারেন:",
             reply_markup=InlineKeyboardMarkup(kb),
@@ -1503,7 +1586,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query.data = "admin_file_history:0"
         await button_handler(update, context)
 
-    # উইথড্র অ্যাপ্রুভ ও রিজেক্ট
+    # উইথড্র অনুমোদন ও বাতিল
     elif data.startswith("approve_withdraw:"):
         owner = get_owner_id()
         if not owner or int(user_id) != int(owner):
@@ -2396,7 +2479,6 @@ async def finalize_stage3(context, query, sub_id, accepted_emails, rejected_item
     if total_acc > 0:
         update_balance(sub["user_id"], reward)
 
-        # রেফারেল যাচাই ও বোনাস প্রদান (১ম অনুমোদনের পর)
         u_info = get_user(sub["user_id"])
         if u_info and u_info.get("referred_by") and u_info.get("ref_bonus_rewarded") == 0:
             referrer_id = u_info["referred_by"]
@@ -2559,6 +2641,47 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await update.message.reply_text("বাতিল করা হয়েছে।", reply_markup=get_bottom_keyboard(user.id))
         return
+
+    # বাটন অফ নোটিশ টেক্সট এডিট
+    if is_admin(user.id) and state == "waiting_btn_notice_text":
+        b_key = context.user_data.get("editing_notice_bkey")
+        if text:
+            set_config(f"notice_{b_key}", text)
+            clean_n, n_kb = parse_text_and_buttons(text)
+            context.user_data.clear()
+            await update.message.reply_text(
+                f"✅ **'{b_key.upper()}'** বাটনের অফ নোটিশ সফলভাবে সেভ হয়েছে!\n\n📝 প্রিভিউ:",
+                parse_mode="Markdown"
+            )
+            await update.message.reply_text(clean_n, reply_markup=n_kb, parse_mode="Markdown")
+        return
+
+    # বাটন সুইচ গার্ড (বাটন অফ থাকলে কাস্টম নোটিশ শো করবে)
+    if not is_admin(user.id):
+        button_switch_pairs = [
+            (btn_sell, "sell"),
+            (btn_bal, "balance"),
+            (btn_wd, "withdraw"),
+            (btn_hist, "history"),
+            (btn_ref, "referral"),
+            (btn_rules, "rules"),
+            (btn_tut, "tutorial"),
+            (btn_sup, "support")
+        ]
+        for b_title, b_key in button_switch_pairs:
+            if text == b_title or (b_key == "sell" and "SELL FRESH GMAIL ACCOUNT" in text) or (b_key == "tutorial" and "TUTORIAL" in text.upper()):
+                if not is_button_active(b_key):
+                    notice = get_button_closed_notice(b_key)
+                    clean_n, n_kb = parse_text_and_buttons(notice)
+                    dismiss_btn = InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")
+                    if n_kb:
+                        inline_rows = [list(r) for r in n_kb.inline_keyboard]
+                        inline_rows.append([dismiss_btn])
+                        final_kb = InlineKeyboardMarkup(inline_rows)
+                    else:
+                        final_kb = InlineKeyboardMarkup([[dismiss_btn]])
+                    await update.message.reply_text(clean_n, reply_markup=final_kb, parse_mode="Markdown")
+                    return
 
     # ইনবক্স ফাইল আপলোড উইজার্ড: ধাপ ১
     if is_admin(user.id) and state == "wizard_waiting_uid":
@@ -3064,7 +3187,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         owner_id = get_owner_id()
         if owner_id:
-            # ডিপ লিংক বাদ দিয়ে ওয়ান-ট্যাপ কপি ফরম্যাটে ওনারকে পাঠানো
             action_buttons = [
                 [
                     InlineKeyboardButton("✅ Approve", callback_data=f"approve_withdraw:{w_id}"),
