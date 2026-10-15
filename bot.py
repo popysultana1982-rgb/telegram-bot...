@@ -193,7 +193,7 @@ def init_db():
 
 
 # =========================================================
-# CONFIG HELPERS & SWITCH CACHE
+# CONFIG HELPERS & VISIBILITY SWITCHES
 # =========================================================
 
 CONFIG_DEFAULTS = {
@@ -206,22 +206,15 @@ CONFIG_DEFAULTS = {
     "max_emails_per_file": "5",
     "duplicate_check_days": "3",
     "maintenance": "0",
-    "switch_sell": "1",
-    "switch_withdraw": "1",
-    "switch_referral": "1",
-    "switch_balance": "1",
-    "switch_history": "1",
-    "switch_rules": "1",
-    "switch_tutorial": "1",
-    "switch_support": "1",
-    "notice_sell": "⚠️ বর্তমানে আমাদের জিমেইল ফাইল রিসিভ কার্যক্রম সাময়িকভাবে বন্ধ আছে। পরবর্তীতে খোলার সময় নোটিশের মাধ্যমে জানিয়ে দেওয়া হবে।",
-    "notice_withdraw": "⚠️ বর্তমানে পেমেন্ট ও উইথড্র সিস্টেম সাময়িকভাবে মেইনটেন্যান্সে রয়েছে। খুব শীঘ্রই চালু হবে।",
-    "notice_referral": "⚠️ রেফারেল সিস্টেম সাময়িকভাবে স্থগিত রয়েছে।",
-    "notice_balance": "⚠️ ব্যালেন্স সার্ভারে কাজ চলছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।",
-    "notice_history": "⚠️ হিস্ট্রি রেকর্ড বর্তমানে আপডেট করা হচ্ছে।",
-    "notice_rules": "⚠️ নিয়মাবলী সেকশন বর্তমানে আপডেট হচ্ছে।",
-    "notice_tutorial": "⚠️ টিউটোরিয়াল ভিডিও শীঘ্রই নতুন নিয়মে আপডেট করা হবে।",
-    "notice_support": "⚠️ সাপোর্ট টিম বর্তমানে ব্যস্ত রয়েছে। অনুগ্রহ করে কিছুক্ষণ পর মেসেজ দিন।"
+    # বাটন সুইচ ও দৃশ্যমানতা (1 = On/Visible, 0 = Off/Hidden)
+    "show_btn_sell": "1",
+    "show_btn_balance": "1",
+    "show_btn_withdraw": "1",
+    "show_btn_history": "1",
+    "show_btn_referral": "1",
+    "show_btn_rules": "1",
+    "show_btn_tutorial": "1",
+    "show_btn_support": "1",
 }
 
 CONFIG_CACHE = {}
@@ -244,7 +237,6 @@ def get_config(key, as_type=float):
     except (ValueError, TypeError):
         return as_type(CONFIG_DEFAULTS.get(key, "0"))
 
-
 def set_config(key, val):
     CONFIG_CACHE[key] = (str(val), datetime.now() + timedelta(seconds=60))
     db_execute("""
@@ -252,35 +244,14 @@ def set_config(key, val):
         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value
     """, (key, str(val)))
 
+def is_button_visible(btn_key):
+    return get_config(f"show_btn_{btn_key}", int) == 1
 
-def is_button_active(btn_key):
-    return get_config(f"switch_{btn_key}", int) == 1
-
-def toggle_button_switch(btn_key):
-    cur = is_button_active(btn_key)
+def toggle_button_visibility(btn_key):
+    cur = is_button_visible(btn_key)
     new_val = 0 if cur else 1
-    set_config(f"switch_{btn_key}", new_val)
+    set_config(f"show_btn_{btn_key}", new_val)
     return new_val == 1
-
-def get_button_closed_notice(btn_key):
-    res = db_execute("SELECT value FROM settings WHERE key=%s", (f"notice_{btn_key}",), fetchone=True)
-    if res and res["value"]:
-        return res["value"]
-    return CONFIG_DEFAULTS.get(f"notice_{btn_key}", "⚠️ এই অপশনটি বর্তমানে সাময়িকভাবে বন্ধ আছে।")
-
-
-# =========================================================
-# CLICK-TO-PAY (DEEP LINK BUILDER)
-# =========================================================
-
-def build_payment_deep_link(method, account_number, amount):
-    amt_str = f"{amount:.2f}"
-    clean_acc = account_number.strip()
-    if method == "Bkash":
-        return f"intent://sendmoney?phone={clean_acc}&amount={amt_str}#Intent;scheme=bkash;package=com.bKash.customerapp;end"
-    elif method == "Nagad":
-        return f"intent://sendmoney?phone={clean_acc}&amount={amt_str}#Intent;scheme=nagad;package=com.konasl.nagad;end"
-    return None
 
 
 # =========================================================
@@ -310,7 +281,6 @@ def parse_text_and_buttons(raw_text):
 
     markup = InlineKeyboardMarkup(keyboard) if keyboard else None
     return clean_text, markup
-
 
 def get_user_chat_url(target_user_id, username=None):
     if username:
@@ -475,8 +445,8 @@ DEFAULT_MESSAGES = {
         "সাময়িকভাবে বটের কার্যক্রম স্থগিত রয়েছে। কাজ সম্পন্ন হওয়ামাত্রই বট পুনরায় চালু হবে।"
     ),
     "referral": (
-        "👥 রেফার করে ইনকাম করুন!\n\n"
-        "আপনার রেফারেল লিংকে জয়েন করা কোনো ইউজার যখন তার প্রথম জিমেইল ফাইল সফলভাবে জমা দিয়ে অ্যাপ্রুভ পাবেন, তখন আপনি পাবেন ৳{bonus} BDT নিশ্চিত বোনাস।\n\n"
+        "👥 **রেফার করে ইনকাম করুন!**\n\n"
+        "আপনার রেফারেল লিংকে জয়েন করা কোনো ইউজার যখন তার প্রথম জিমেইল ফাইল সফলভাবে জমা দিয়ে অ্যাপ্রুভ পাবেন, তখন আপনি পাবেন ৳{bonus} BDT বোনাস।\n\n"
         "আপনার রেফারেল লিংকটি শেয়ার করুন:\n"
         "🔗 `{link}`"
     )
@@ -646,7 +616,6 @@ async def is_user_joined_all(bot, user_id):
     except Exception:
         return False
 
-
 def get_first_time_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 ১. পেমেন্ট প্রুফ চ্যানেল", url=FORCE_CHANNEL_LINK)],
@@ -717,27 +686,46 @@ def save_submitted_emails(emails):
 
 
 # =========================================================
-# DYNAMIC BIG KEYBOARD & INLINE BUILDERS
+# DYNAMIC BIG KEYBOARD (INCL. ADMIN PANEL FOR ADMINS)
 # =========================================================
 
-def get_bottom_keyboard():
-    btn_sell = get_button_title("sell", "📩 SELL FRESH GMAIL ACCOUNT")
-    btn_bal = get_button_title("balance", "💰 BALANCE")
-    btn_wd = get_button_title("withdraw", "💸 WITHDRAW")
-    btn_hist = get_button_title("history", "📜 হিস্ট্রি")
-    btn_ref = get_button_title("referral", "👥 REFERRAL")
-    btn_rules = get_button_title("rules", "📜 RULES")
-    btn_tut = get_button_title("tutorial", "▶️ TUTORIAL")
-    btn_sup = get_button_title("support", "📞 SUPPORT")
+def get_bottom_keyboard(user_id=None):
+    keyboard = []
 
-    keyboard = [
-        [KeyboardButton(btn_sell)],
-        [KeyboardButton(btn_bal), KeyboardButton(btn_wd)],
-        [KeyboardButton(btn_hist), KeyboardButton(btn_ref)],
-        [KeyboardButton(btn_rules), KeyboardButton(btn_tut)],
-        [KeyboardButton(btn_sup)]
-    ]
+    # বাটন ভিজিবিলিটি চেক করে কিবোর্ডে যোগ করা
+    if is_button_visible("sell"):
+        btn_sell = get_button_title("sell", "📩 SELL FRESH GMAIL ACCOUNT")
+        keyboard.append([KeyboardButton(btn_sell)])
 
+    row1 = []
+    if is_button_visible("balance"):
+        row1.append(KeyboardButton(get_button_title("balance", "💰 BALANCE")))
+    if is_button_visible("withdraw"):
+        row1.append(KeyboardButton(get_button_title("withdraw", "💸 WITHDRAW")))
+    if row1:
+        keyboard.append(row1)
+
+    row2 = []
+    if is_button_visible("history"):
+        row2.append(KeyboardButton(get_button_title("history", "📜 হিস্ট্রি")))
+    if is_button_visible("referral"):
+        row2.append(KeyboardButton(get_button_title("referral", "👥 REFERRAL")))
+    if row2:
+        keyboard.append(row2)
+
+    row3 = []
+    if is_button_visible("rules"):
+        row3.append(KeyboardButton(get_button_title("rules", "📜 RULES")))
+    if is_button_visible("tutorial"):
+        row3.append(KeyboardButton(get_button_title("tutorial", "▶️ TUTORIAL")))
+    if row3:
+        keyboard.append(row3)
+
+    if is_button_visible("support"):
+        btn_sup = get_button_title("support", "📞 SUPPORT")
+        keyboard.append([KeyboardButton(btn_sup)])
+
+    # কাস্টম ডাইনামিক বাটন
     custom_reply_btns = db_execute("SELECT title FROM dynamic_buttons WHERE parent_id=0 AND show_in_reply=1 ORDER BY id ASC", fetchall=True)
     if custom_reply_btns:
         row = []
@@ -748,6 +736,10 @@ def get_bottom_keyboard():
                 row = []
         if row:
             keyboard.append(row)
+
+    # শুধুমাত্র ওনার এবং সহযোগী অ্যাডমিনদের বড় কিবোর্ডে "🔐 ADMIN PANEL" বাটন যুক্ত করা
+    if user_id and is_admin(user_id):
+        keyboard.append([KeyboardButton("🔐 ADMIN PANEL")])
 
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -778,14 +770,10 @@ async def show_main_menu(update, context):
     if url_btns:
         inline_kb = InlineKeyboardMarkup([[InlineKeyboardButton(b["title"], url=b["content"])] for b in url_btns])
 
-    if update.callback_query:
-        await update.callback_query.message.reply_text(msg_text, reply_markup=get_bottom_keyboard(), parse_mode="Markdown")
-        if inline_kb:
-            await update.callback_query.message.reply_text("📌 **গুরুত্বপূর্ণ লিংকসমূহ:**", reply_markup=inline_kb)
-    else:
-        await update.message.reply_text(msg_text, reply_markup=get_bottom_keyboard(), parse_mode="Markdown")
-        if inline_kb:
-            await update.message.reply_text("📌 **গুরুত্বপূর্ণ লিংকসমূহ:**", reply_markup=inline_kb)
+    target_msg = update.callback_query.message if update.callback_query else update.message
+    await target_msg.reply_text(msg_text, reply_markup=get_bottom_keyboard(user.id), parse_mode="Markdown")
+    if inline_kb:
+        await target_msg.reply_text("📌 **গুরুত্বপূর্ণ লিংকসমূহ:**", reply_markup=inline_kb)
 
 
 # =========================================================
@@ -909,7 +897,7 @@ async def set_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if context.args[0] == ADMIN_SECRET_KEY:
-        await update.message.reply_text(f"👑 আপনার আইডি ({user_id}) স্থায়ীভাবে ওনার হিসেবে রয়েছে। /admin দিয়ে প্যানেল ওপেন করুন।")
+        await update.message.reply_text(f"👑 আপনার আইডি ({user_id}) ওনার হিসেবে সেট করা আছে। নিচে বড় কিবোর্ডে 🔐 ADMIN PANEL পাবেন।", reply_markup=get_bottom_keyboard(user_id))
     else:
         await update.message.reply_text("❌ পাসওয়ার্ড ভুল!")
 
@@ -979,7 +967,8 @@ async def admin_list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_chat or update.effective_chat.type != "private":
         return
-    if not is_admin(update.effective_user.id):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
         await update.message.reply_text("❌ আপনার অ্যাডমিন অ্যাক্সেস নেই।")
         return
 
@@ -1179,7 +1168,7 @@ async def show_admin_panel(query, user_id):
             InlineKeyboardButton("📨 পেন্ডিং ফাইলস", callback_data="admin_pending_files")
         ],
         [
-            InlineKeyboardButton("🎛️ বাটন কন্ট্রোল ও সুইচ", callback_data="admin_switches_menu"),
+            InlineKeyboardButton("✏️ ডিফল্ট বাটন এডিট ও প্রদর্শন", callback_data="admin_default_btns_menu"),
             InlineKeyboardButton("⚙️ আর্থিক লেনদেন ও লিমিট", callback_data="admin_limits_menu")
         ],
         [
@@ -1195,20 +1184,19 @@ async def show_admin_panel(query, user_id):
             InlineKeyboardButton("💬 বাটন মেসেজ কন্ট্রোল", callback_data="admin_messages_menu")
         ],
         [
-            InlineKeyboardButton("✏️ ডিফল্ট বাটন নাম এডিট", callback_data="admin_edit_buttons_menu"),
-            InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ", callback_data="admin_clear_cache")
+            InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ", callback_data="admin_clear_cache"),
+            InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")
         ],
         [
             InlineKeyboardButton("📢 Broadcast Post", callback_data="admin_broadcast"),
             InlineKeyboardButton("✉️ Single Message", callback_data="admin_single_message")
-        ],
-        [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")]
+        ]
     ]
 
     if is_owner:
         keyboard.append([InlineKeyboardButton("👥 অ্যাডমিন তালিকা ও নাম এডিট (Owner Only)", callback_data="owner_manage_admins")])
 
-    keyboard.append([InlineKeyboardButton("⬅️ প্যানেল বন্ধ করুন", callback_data="admin_close")])
+    keyboard.append([InlineKeyboardButton("❌ প্যানেল বন্ধ করুন", callback_data="admin_close")])
 
     role_text = "👑 OWNER CONTROL PANEL" if is_owner else "👨‍💼 ADMIN CONTROL PANEL"
     await query.edit_message_text(f"{role_text}\n\nএকটি অপশন নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1266,6 +1254,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
+    # মেসেজ মুছে ফেলার বাটন (Dismiss / Back)
+    if data == "dismiss_msg":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        return
+
     if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         if joined:
@@ -1295,14 +1291,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=user_id, text=f"📂 **{btn['title']}** এর সাব-মেনু:", reply_markup=sub_markup, parse_mode="Markdown")
         return
 
+    # -------------------------------------------------------------
+    # ইউজার হিস্ট্রি মেনু ও সাব-মেনু
+    # -------------------------------------------------------------
     if data == "user_hist_live":
         subs = db_execute(
             "SELECT * FROM submissions WHERE user_id=%s AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
             (user_id,), 
             fetchall=True
         )
+        back_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ হিস্ট্রি মেনু", callback_data="user_hist_menu"),
+             InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+        ])
         if not subs:
-            back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
             await query.edit_message_text("⏳ **বর্তমানে আপনার কোনো ফাইল প্রসেসিং বা পর্যালোচনায় নেই।**\n\nনতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখা যাবে।", reply_markup=back_kb, parse_mode="Markdown")
             return
 
@@ -1322,14 +1324,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⚡ স্ট্যাটাস: {st_text}\n"
                 f"-----------------------------\n"
             )
-        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
         await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
         return
 
     elif data == "user_hist_all":
         subs = db_execute("SELECT * FROM submissions WHERE user_id=%s ORDER BY id DESC LIMIT 15", (user_id,), fetchall=True)
+        back_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ হিস্ট্রি মেনু", callback_data="user_hist_menu"),
+             InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+        ])
         if not subs:
-            back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
             await query.edit_message_text("📜 আপনি এখনও কোনো ফাইল সাবমিট করেননি।", reply_markup=back_kb)
             return
 
@@ -1350,13 +1354,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✉️ মোট: {len(emails)}টি | ফলাফল: {st_text}\n"
                 f"-----------------------------\n"
             )
-        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
         await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
         return
 
     elif data == "user_hist_withdrawals":
         wds = db_execute("SELECT * FROM withdrawals WHERE user_id=%s ORDER BY id DESC LIMIT 20", (user_id,), fetchall=True)
-        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ হিস্ট্রি মেনুতে ফিরুন", callback_data="user_hist_menu")]])
+        back_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ হিস্ট্রি মেনু", callback_data="user_hist_menu"),
+             InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+        ])
         
         if not wds:
             await query.edit_message_text("💸 **আপনার কোনো উইথড্রয়াল হিস্ট্রি পাওয়া যায়নি।**", reply_markup=back_kb, parse_mode="Markdown")
@@ -1393,7 +1399,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         hist_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
             [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")],
-            [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")]
+            [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")],
+            [InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
         ])
         await query.edit_message_text(
             "📜 **আপনার হিস্ট্রি ক্যাটাগরি নির্বাচন করুন:**",
@@ -1402,6 +1409,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # -------------------------------------------------------------
+    # অ্যাডমিন প্যানেল গার্ড
+    # -------------------------------------------------------------
     if not is_admin(user_id):
         return
 
@@ -1418,53 +1428,52 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(msg, show_alert=True)
         await show_admin_panel(query, user_id)
 
-    elif data == "admin_switches_menu":
-        buttons = [
+    # -------------------------------------------------------------
+    # ডিফল্ট বাটন এডিট, রিমুভ ও প্রদর্শন মেনু
+    # -------------------------------------------------------------
+    elif data == "admin_default_btns_menu":
+        btn_items = [
             ("sell", "📩 Sell Gmail"),
-            ("withdraw", "💸 Withdraw"),
-            ("referral", "👥 Referral"),
             ("balance", "💰 Balance"),
+            ("withdraw", "💸 Withdraw"),
             ("history", "📜 History"),
+            ("referral", "👥 Referral"),
             ("rules", "📜 Rules"),
             ("tutorial", "▶️ Tutorial"),
             ("support", "📞 Support")
         ]
         kb = []
-        for b_key, b_title in buttons:
-            state_icon = "🟢 অন" if is_button_active(b_key) else "🔴 অফ"
+        for b_key, b_label in btn_items:
+            vis = is_button_visible(b_key)
+            vis_text = "👁️ দৃশ্যমান (On)" if vis else "🗑️ রিমুভ/হাইড (Off)"
             kb.append([
-                InlineKeyboardButton(f"{b_title}: {state_icon}", callback_data=f"btn_switch_toggle:{b_key}"),
-                InlineKeyboardButton("✍️ নোটিশ এডিট", callback_data=f"btn_notice_edit_prompt:{b_key}")
+                InlineKeyboardButton(f"{b_label}: {vis_text}", callback_data=f"toggle_vis:{b_key}"),
+                InlineKeyboardButton("✏️ নাম এডিট", callback_data=f"edit_btn:{b_key}")
             ])
-        kb.append([InlineKeyboardButton("⬅️ Back to Panel", callback_data="admin_panel")])
-
+        kb.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")])
         await query.edit_message_text(
-            "🎛️ **বাটন কন্ট্রোল ও স্বাধীন সুইচ প্যানেল:**\n\n"
-            "যেকোনো বাটনের স্ট্যাটাস অন/অফ করতে ক্লিক করুন। বাটন অফ থাকলে ইউজাররা কী নোটিশ পাবে তা '✍️ নোটিশ এডিট' বাটন থেকে সেট করুন:",
+            "✏️ **ডিফল্ট বাটন কন্ট্রোল প্যানেল:**\n\n"
+            "• যেকোনো বাটনে চাপ দিয়ে বড় কিবোর্ড থেকে তা **হাইড/রিমুভ** করতে পারেন বা আবার ফিরিয়ে আনতে পারেন।\n"
+            "• '✏️ নাম এডিট' চেপে বাটনের নাম পরিবর্তন করতে পারেন:",
             reply_markup=InlineKeyboardMarkup(kb),
             parse_mode="Markdown"
         )
 
-    elif data.startswith("btn_switch_toggle:"):
+    elif data.startswith("toggle_vis:"):
         b_key = data.split(":")[1]
-        new_st = toggle_button_switch(b_key)
-        status_txt = "চালু (Active)" if new_st else "বন্ধ (Disabled)"
-        await query.answer(f"বাটনটি {status_txt} করা হয়েছে!", show_alert=True)
-        query.data = "admin_switches_menu"
+        now_vis = toggle_button_visibility(b_key)
+        state_label = "কিবোর্ডে যুক্ত করা হয়েছে" if now_vis else "কিবোর্ড থেকে রিমুভ/হাইড করা হয়েছে"
+        await query.answer(f"বাটনটি {state_label}!", show_alert=True)
+        query.data = "admin_default_btns_menu"
         await button_handler(update, context)
 
-    elif data.startswith("btn_notice_edit_prompt:"):
-        b_key = data.split(":")[1]
-        context.user_data["editing_notice_bkey"] = b_key
-        context.user_data["state"] = "waiting_btn_notice_text"
-        current_n = get_button_closed_notice(b_key)
-        await query.edit_message_text(
-            f"✍️ **'{b_key.upper()}' বাটন অফ নোটিশ এডিট**\n\n"
-            f"📝 বর্তমান নোটিশ:\n`{current_n}`\n\n"
-            "👉 বাটন অফ থাকা অবস্থায় ইউজারদের জন্য নতুন নোটিশটি লিখে পাঠিয়ে দিন:\n(বাতিল করতে /cancel পাঠান)",
-            parse_mode="Markdown"
-        )
+    elif data.startswith("edit_btn:"):
+        btn_key = data.split(":")[1]
+        context.user_data["editing_btn_key"] = btn_key
+        context.user_data["state"] = "waiting_new_button_title"
+        await query.edit_message_text(f"✍️ **'{btn_key.upper()}'** বাটনটির নতুন নাম লিখে চ্যাটে পাঠিয়ে দিন:\n(বাতিল করতে /cancel পাঠান)")
 
+    # ইনবক্স ফাইল আপলোড উইজার্ড
     elif data == "adm_wizard_inbox_start":
         context.user_data["state"] = "wizard_waiting_uid"
         await query.edit_message_text(
@@ -1474,6 +1483,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
+    # সকল সাবমিশন হিস্ট্রি মোছা
     elif data == "adm_clear_all_subs_prompt":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⚠️ হ্যাঁ, সব ফাইল মুছুন", callback_data="adm_clear_all_subs_confirm")],
@@ -1493,6 +1503,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query.data = "admin_file_history:0"
         await button_handler(update, context)
 
+    # উইথড্র অ্যাপ্রুভ ও রিজেক্ট
     elif data.startswith("approve_withdraw:"):
         owner = get_owner_id()
         if not owner or int(user_id) != int(owner):
@@ -1513,13 +1524,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u_rate = get_config("usdt_rate", float)
         rec_bdt = float(w['receive_amount'])
         rec_usdt = rec_bdt / u_rate if u_rate > 0 else 0
-        await query.edit_message_text(f"✅ Withdrawal Approved! পেমেন্ট: ৳{rec_bdt:.2f} (${rec_usdt:.2f})")
+        await query.edit_message_text(f"✅ Withdrawal #{w_id} Approved! পেমেন্ট: ৳{rec_bdt:.2f} (${rec_usdt:.2f})")
         try:
             msg = f"✅ উইথড্র সফল হয়েছে!\n💸 পেয়েছেন: ৳{rec_bdt:.2f} BDT"
             if w["method"] == "Binance":
                 msg += f" (${rec_usdt:.2f} USDT)"
-            msg += f"\n💳 মেথড: {w['method']}\n📌 একাউন্ট/UID: {w['account']}"
-            await context.bot.send_message(chat_id=w["user_id"], text=msg)
+            msg += f"\n💳 মেথড: {w['method']}\n📌 একাউন্ট/UID: `{w['account']}`"
+            await context.bot.send_message(chat_id=w["user_id"], text=msg, parse_mode="Markdown")
         except Exception:
             pass
 
@@ -1536,7 +1547,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_execute("UPDATE withdrawals SET status='rejected' WHERE id=%s", (w_id,))
         await query.edit_message_text(f"❌ Withdrawal #{w_id} Rejected.")
         try:
-            await context.bot.send_message(chat_id=w["user_id"], text=f"❌ উইথড্রয়াল রিকোয়েস্ট (৳{w['amount']:.2f}) বাতিল করা হয়েছে।")
+            await context.bot.send_message(chat_id=w["user_id"], text=f"❌ আপনার উইথড্রয়াল রিকোয়েস্ট (৳{w['amount']:.2f}) বাতিল করা হয়েছে।")
         except Exception:
             pass
 
@@ -2265,26 +2276,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("মেসেজ সফলভাবে রিসেট করা হয়েছে!", show_alert=True)
         await show_admin_panel(query, user_id)
 
-    elif data == "admin_edit_buttons_menu":
-        keyboard = [
-            [InlineKeyboardButton("✏️ Sell বাটন", callback_data="edit_btn:sell"),
-             InlineKeyboardButton("✏️ Balance বাটন", callback_data="edit_btn:balance")],
-            [InlineKeyboardButton("✏️ Withdraw বাটন", callback_data="edit_btn:withdraw"),
-             InlineKeyboardButton("✏️ History বাটন", callback_data="edit_btn:history")],
-            [InlineKeyboardButton("✏️ Referral বাটন", callback_data="edit_btn:referral"),
-             InlineKeyboardButton("✏️ Rules বাটন", callback_data="edit_btn:rules")],
-            [InlineKeyboardButton("✏️ Tutorial বাটন", callback_data="edit_btn:tutorial"),
-             InlineKeyboardButton("✏️ Support বাটন", callback_data="edit_btn:support")],
-            [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
-        ]
-        await query.edit_message_text("✏️ কোন বাটনটির নাম পরিবর্তন করতে চান?", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data.startswith("edit_btn:"):
-        btn_key = data.split(":")[1]
-        context.user_data["editing_btn_key"] = btn_key
-        context.user_data["state"] = "waiting_new_button_title"
-        await query.edit_message_text(f"বাটনটির নতুন নাম লিখে পাঠান:\n(কী: {btn_key})")
-
     elif data == "admin_broadcast":
         context.user_data["state"] = "admin_broadcast"
         await query.edit_message_text("📢 ব্রডকাস্ট মেসেজ লিখে পাঠান:\n\n(নিচে বাটন দিতে চাইলে লেখার সাথে `[বাটন | লিংক]` দিয়ে দিন)")
@@ -2405,6 +2396,7 @@ async def finalize_stage3(context, query, sub_id, accepted_emails, rejected_item
     if total_acc > 0:
         update_balance(sub["user_id"], reward)
 
+        # রেফারেল যাচাই ও বোনাস প্রদান (১ম অনুমোদনের পর)
         u_info = get_user(sub["user_id"])
         if u_info and u_info.get("referred_by") and u_info.get("ref_bonus_rewarded") == 0:
             referrer_id = u_info["referred_by"]
@@ -2418,7 +2410,7 @@ async def finalize_stage3(context, query, sub_id, accepted_emails, rejected_item
                     chat_id=referrer_id,
                     text=(
                         f"🎉 **অভিনন্দন! আপনার রেফারেল সফল হয়েছে!**\n\n"
-                        f"আপনার লিংক দিয়ে যুক্ত হওয়া একজন ইউজার তার প্রথম জিমেইল সফলভাবে জমা দিয়ে অ্যাপ্রুভ পেয়েছেন!\n"
+                        f"আপনার লিংক দিয়ে যুক্ত হওয়া একজন ইউজার তার প্রথম জিমেইল সফলভাবে জমা দিয়ে অনুমোদন পেয়েছেন!\n"
                         f"💰 আপনার অ্যাকাউন্টে রেফার বোনাস যোগ হয়েছে: **+৳{ref_bonus:.2f} BDT**"
                     ),
                     parse_mode="Markdown"
@@ -2528,7 +2520,7 @@ async def finalize_reject_all(context, query, sub_id, rejected_items, admin_user
 
 
 # =========================================================
-# MESSAGE HANDLER
+# MESSAGE HANDLER (INCL. CLOSE / DISMISS BUTTONS)
 # =========================================================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2549,6 +2541,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     rate = get_config("email_rate", float)
 
+    # ওনার ও অ্যাডমিনদের বড় কিবোর্ড শর্টকাট
+    if text == "🔐 ADMIN PANEL" and is_admin(user.id):
+        await admin(update, context)
+        return
+
     btn_sell = get_button_title("sell", "📩 SELL FRESH GMAIL ACCOUNT")
     btn_bal = get_button_title("balance", "💰 BALANCE")
     btn_wd = get_button_title("withdraw", "💸 WITHDRAW")
@@ -2560,9 +2557,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "/cancel":
         context.user_data.clear()
-        await update.message.reply_text("বাতিল করা হয়েছে।")
+        await update.message.reply_text("বাতিল করা হয়েছে।", reply_markup=get_bottom_keyboard(user.id))
         return
 
+    # ইনবক্স ফাইল আপলোড উইজার্ড: ধাপ ১
     if is_admin(user.id) and state == "wizard_waiting_uid":
         if not text.isdigit():
             await update.message.reply_text("❌ সঠিক সংখ্যায় টেলিগ্রাম আইডি দিন। (যেমন: `123456789`)")
@@ -2582,6 +2580,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ইনবক্স ফাইল আপলোড উইজার্ড: ধাপ ২
     if is_admin(user.id) and state == "wizard_waiting_file":
         doc = update.message.document
         if not doc:
@@ -2655,37 +2654,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await dispatch_submission_to_admins(context, sub_id, target_uid, target_user["username"], doc.file_id, valid_emails)
         return
-
-    if is_admin(user.id) and state == "waiting_btn_notice_text":
-        b_key = context.user_data.get("editing_notice_bkey")
-        if text:
-            set_config(f"notice_{b_key}", text)
-            context.user_data.clear()
-            await update.message.reply_text(
-                f"✅ **'{b_key.upper()}'** বাটনের অফ নোটিশ সফলভাবে সেভ হয়েছে!\n\n"
-                f"📝 নতুন নোটিশ:\n`{text}`",
-                parse_mode="Markdown"
-            )
-        return
-
-    if not is_admin(user.id):
-        button_switch_pairs = [
-            (btn_sell, "sell"),
-            (btn_bal, "balance"),
-            (btn_wd, "withdraw"),
-            (btn_hist, "history"),
-            (btn_ref, "referral"),
-            (btn_rules, "rules"),
-            (btn_tut, "tutorial"),
-            (btn_sup, "support")
-        ]
-        for b_title, b_key in button_switch_pairs:
-            if text == b_title or (b_key == "sell" and "SELL FRESH GMAIL ACCOUNT" in text) or (b_key == "tutorial" and "TUTORIAL" in text.upper()):
-                if not is_button_active(b_key):
-                    notice = get_button_closed_notice(b_key)
-                    clean_n, n_kb = parse_text_and_buttons(notice)
-                    await update.message.reply_text(clean_n, reply_markup=n_kb, parse_mode="Markdown")
-                    return
 
     if is_admin(user.id) and state == "waiting_custom_reason_text":
         info = context.user_data.get("custom_reason_info")
@@ -2788,7 +2756,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (parent_id, title, b_type, text)
         )
         context.user_data.clear()
-        await update.message.reply_text(f"🎉 **বাটন সফলভাবে তৈরি হয়েছে!**\n\nনাম: {title}\nধরন: {b_type.upper()}", reply_markup=get_bottom_keyboard())
+        await update.message.reply_text(f"🎉 **বাটন সফলভাবে তৈরি হয়েছে!**\n\nনাম: {title}\nধরন: {b_type.upper()}", reply_markup=get_bottom_keyboard(user.id))
         return
 
     dyn_btn_row = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=0 AND title=%s", (text,), fetchone=True)
@@ -2839,18 +2807,22 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(report_msg, parse_mode="Markdown")
         return
 
-    if text == btn_sup:
+    if is_button_visible("support") and text == btn_sup:
         sup_text = get_custom_msg("support")
         clean_sup, sup_kb = parse_text_and_buttons(sup_text)
-        def_kb = InlineKeyboardMarkup([[InlineKeyboardButton("💬 সরাসরি মেসেজ পাঠান / Support", url=SUPPORT_URL)]])
+        def_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💬 সরাসরি মেসেজ পাঠান / Support", url=SUPPORT_URL)],
+            [InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+        ])
         await update.message.reply_text(clean_sup, reply_markup=(sup_kb or def_kb), parse_mode="Markdown")
         return
 
-    if text == btn_tut or "TUTORIAL" in text.upper():
+    if is_button_visible("tutorial") and (text == btn_tut or "TUTORIAL" in text.upper()):
         tut_text = get_custom_msg("tutorial")
         clean_tut, tut_kb = parse_text_and_buttons(tut_text)
         def_tut_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📺 Watch Video Tutorial", url="https://youtube.com")]
+            [InlineKeyboardButton("📺 Watch Video Tutorial", url="https://youtube.com")],
+            [InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
         ])
         await update.message.reply_text(clean_tut, reply_markup=(tut_kb or def_tut_kb), parse_mode="Markdown")
         return
@@ -2888,14 +2860,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text:
             set_button_title(btn_key, text)
             context.user_data.clear()
-            await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}", reply_markup=get_bottom_keyboard())
+            await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}", reply_markup=get_bottom_keyboard(user.id))
         return
 
-    if text == btn_hist:
+    if is_button_visible("history") and text == btn_hist:
         hist_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
             [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")],
-            [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")]
+            [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")],
+            [InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
         ])
         await update.message.reply_text(
             "📜 **আপনার হিস্ট্রি ক্যাটাগরি নির্বাচন করুন:**\n\n"
@@ -2907,7 +2880,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if text == btn_sell or "SELL FRESH GMAIL ACCOUNT" in text:
+    if is_button_visible("sell") and (text == btn_sell or "SELL FRESH GMAIL ACCOUNT" in text):
         count = get_today_file_count(user.id)
         d_lim = get_config("daily_file_limit", int)
         e_lim = get_config("max_emails_per_file", int)
@@ -2918,51 +2891,59 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["state"] = "waiting_file"
         sell_msg = get_custom_msg("sell")
         clean_s, s_kb = parse_text_and_buttons(sell_msg)
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বাতিল করুন", callback_data="dismiss_msg")]])
         await update.message.reply_text(
             f"{clean_s}\n\n"
             f"📊 আজকের সাবমিশন: {count}/{d_lim}\n"
             f"💰 প্রতি ভ্যালিড জিমেইল রেট: ৳{rate:.2f} BDT\n"
             f"⚠️ ফাইলে সর্বোচ্চ {e_lim}টি জিমেইল থাকতে পারবে।",
-            reply_markup=s_kb,
+            reply_markup=(s_kb or cancel_kb),
             parse_mode="Markdown"
         )
         return
 
-    elif text == btn_bal:
+    elif is_button_visible("balance") and text == btn_bal:
         b_bdt = get_balance(user.id)
         u_rate = get_config("usdt_rate", float)
         b_usdt = b_bdt / u_rate if u_rate > 0 else 0
         refs = get_referral_count(user.id)
+        bal_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
         await update.message.reply_text(
-            f"💰 YOUR ACCOUNT BALANCE\n\n"
+            f"💰 **YOUR ACCOUNT BALANCE**\n\n"
             f"🔹 BDT Balance: ৳{b_bdt:.2f} BDT\n"
             f"🔹 USDT Balance: ${b_usdt:.2f} USDT\n"
-            f"👥 Total Referrals (Verified): {refs} users"
+            f"👥 Total Referrals (Verified): {refs} users",
+            reply_markup=bal_kb,
+            parse_mode="Markdown"
         )
         return
 
-    elif text == btn_wd:
+    elif is_button_visible("withdraw") and text == btn_wd:
         bal = get_balance(user.id)
         u_rate = get_config("usdt_rate", float)
         min_w = get_config("min_withdraw", float)
         w_fee = get_config("withdraw_fee_percent", float)
         bal_usdt = bal / u_rate if u_rate > 0 else 0
         if bal < min_w:
-            await update.message.reply_text(f"❌ সর্বনিম্ন উইথড্র ৳{min_w:.2f} BDT। আপনার আছে: ৳{bal:.2f} BDT")
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
+            await update.message.reply_text(f"❌ সর্বনিম্ন উইথড্র ৳{min_w:.2f} BDT। আপনার আছে: ৳{bal:.2f} BDT", reply_markup=kb)
             return
 
         context.user_data["state"] = "withdraw_amount"
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
         await update.message.reply_text(
-            f"💸 WITHDRAWAL SYSTEM\n\n"
+            f"💸 **WITHDRAWAL SYSTEM**\n\n"
             f"💰 ব্যালেন্স: ৳{bal:.2f} BDT (${bal_usdt:.2f} USDT)\n"
             f"🔹 সর্বনিম্ন উইথড্র: ৳{min_w:.2f} BDT\n"
             f"🔹 ফি: {w_fee:.1f}%\n"
             f"🔹 ডলার রেট: $1 = ৳{u_rate:.2f}\n\n"
-            f"কত টাকা উইথড্র করতে চান? সংখ্যায় লিখে পাঠান:"
+            f"কত টাকা উইথড্র করতে চান? সংখ্যায় লিখে পাঠান:\n(বাতিল করতে /cancel পাঠান)",
+            reply_markup=cancel_kb,
+            parse_mode="Markdown"
         )
         return
 
-    elif text == btn_ref:
+    elif is_button_visible("referral") and text == btn_ref:
         b_info = await context.bot.get_me()
         ref_link = f"https://t.me/{b_info.username}?start={user.id}"
         refs = get_referral_count(user.id)
@@ -2979,14 +2960,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔹 ভেরিফায়েড সফল রেফার: {refs} জন\n"
             f"🔹 মোট অর্জিত আয়: ৳{earned:.2f} BDT"
         )
-        await update.message.reply_text(msg, reply_markup=r_kb, parse_mode="Markdown")
+        def_r_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
+        await update.message.reply_text(msg, reply_markup=(r_kb or def_r_kb), parse_mode="Markdown")
         return
 
-    elif text == btn_rules:
+    elif is_button_visible("rules") and text == btn_rules:
         name = user.first_name or "User"
         rules = get_custom_msg("rules").replace("{name}", name)
         clean_rul, rul_kb = parse_text_and_buttons(rules)
-        await update.message.reply_text(clean_rul, reply_markup=rul_kb, parse_mode="Markdown")
+        def_rul_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
+        await update.message.reply_text(clean_rul, reply_markup=(rul_kb or def_rul_kb), parse_mode="Markdown")
         return
 
     if is_admin(user.id) and state == "admin_single_user":
@@ -3038,7 +3021,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("💳 bKash", callback_data="method_bkash")],
             [InlineKeyboardButton("💳 Nagad", callback_data="method_nagad")],
-            [InlineKeyboardButton("💰 Binance (UID)", callback_data="method_binance")]
+            [InlineKeyboardButton("💰 Binance (UID)", callback_data="method_binance")],
+            [InlineKeyboardButton("❌ বাতিল করুন", callback_data="dismiss_msg")]
         ]
         await update.message.reply_text(
             f"💸 উইথড্র সামারি:\nউত্তোলন: ৳{amount:.2f} BDT\nফি: ৳{fee:.2f} BDT\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\nমেথড নির্বাচন করুন:",
@@ -3071,18 +3055,22 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         w_id = last_w["id"] if last_w else 1
         context.user_data.clear()
 
-        await update.message.reply_text(f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: {text}\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\n⚡ আপনার উইথড্র স্ট্যাটাস '📜 হিস্ট্রি' > '💸 উইথড্র হিস্ট্রি'-তে লাইভ দেখতে পাবেন।")
+        confirm_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
+        await update.message.reply_text(
+            f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: `{text}`\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\n⚡ আপনার উইথড্র স্ট্যাটাস '📜 হিস্ট্রি' > '💸 উইথড্র হিস্ট্রি'-তে দেখতে পাবেন।",
+            reply_markup=confirm_kb,
+            parse_mode="Markdown"
+        )
 
         owner_id = get_owner_id()
         if owner_id:
-            deep_link = build_payment_deep_link(method, text, rec)
-            action_buttons = []
-            if deep_link:
-                action_buttons.append([InlineKeyboardButton(f"📲 Pay via {method} App (Click-to-Pay)", url=deep_link)])
-            action_buttons.append([
-                InlineKeyboardButton("✅ Approve", callback_data=f"approve_withdraw:{w_id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"reject_withdraw:{w_id}")
-            ])
+            # ডিপ লিংক বাদ দিয়ে ওয়ান-ট্যাপ কপি ফরম্যাটে ওনারকে পাঠানো
+            action_buttons = [
+                [
+                    InlineKeyboardButton("✅ Approve", callback_data=f"approve_withdraw:{w_id}"),
+                    InlineKeyboardButton("❌ Reject", callback_data=f"reject_withdraw:{w_id}")
+                ]
+            ]
             keyboard = InlineKeyboardMarkup(action_buttons)
             try:
                 await context.bot.send_message(
@@ -3092,15 +3080,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"🆔 ইউজার: `{user.id}`\n"
                         f"💰 তোলার পরিমাণ: ৳{amt:.2f} BDT\n"
                         f"💸 পেমেন্ট দিতে হবে: ৳{rec:.2f} (${rec_usdt:.2f})\n"
-                        f"💳 মেথড: {method}\n"
-                        f"📌 অ্যাকাউন্ট/UID: `{text}`\n\n"
-                        f"💡 'Click-to-Pay' বাটনে চাপ দিলে সরাসরি {method} অ্যাপে নম্বর ও অ্যামাউন্ট বসে যাবে।"
+                        f"💳 মেথড: **{method}**\n"
+                        f"📌 অ্যাকাউন্ট/নম্বর: `{text}`\n\n"
+                        f"💡 নম্বরের ওপর আঙুল ছোঁয়ালেই (ট্যাপ করলেই) কপি হয়ে যাবে। টাকা পাঠিয়ে অ্যাপ্রুভ বাটনে চাপ দিন।"
                     ),
                     reply_markup=keyboard,
                     parse_mode="Markdown"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Failed to notify owner for withdraw: {e}")
         return
 
     if state == "waiting_file":
@@ -3175,7 +3163,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await dispatch_submission_to_admins(context, sub_id, user.id, user.username, doc.file_id, valid_emails)
         return
 
-    await update.message.reply_text("Please use the buttons below.", reply_markup=get_bottom_keyboard())
+    await update.message.reply_text("নিচের বাটনগুলো ব্যবহার করুন:", reply_markup=get_bottom_keyboard(user.id))
 
 
 async def withdrawal_method_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3192,7 +3180,8 @@ async def withdrawal_method_handler(update: Update, context: ContextTypes.DEFAUL
 
         context.user_data["withdraw_method"] = method
         context.user_data["state"] = "withdraw_account"
-        await query.edit_message_text(f"💳 নির্বাচিত: {method}\n\n👉 {hint}")
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বাতিল করুন", callback_data="dismiss_msg")]])
+        await query.edit_message_text(f"💳 নির্বাচিত: {method}\n\n👉 {hint}", reply_markup=cancel_kb)
 
 
 async def refinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
