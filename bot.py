@@ -12,6 +12,7 @@ import shutil
 import threading
 from datetime import datetime, timedelta
 
+import aiohttp
 import openpyxl
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -3162,7 +3163,6 @@ def main():
         
         # হেলথ চেক রাউট যুক্ত করার জন্য কাস্টম ওয়েব রুট হ্যান্ডলার
         async def health_check(request):
-            import aiohttp.web
             return aiohttp.web.Response(text="Bot is running smoothly!", status=200)
 
         application.run_webhook(
