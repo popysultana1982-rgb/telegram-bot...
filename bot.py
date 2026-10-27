@@ -1,6 +1,6 @@
 # =========================================================
 # FILE: bot.py
-# PROJECT: Automated Multi-Stage Gmail Buy/Sell Bot (Super Fast & Admin Optimized)
+# PROJECT: Automated Multi-Stage Gmail Buy/Sell Bot (Health-Check & Super Fast)
 # =========================================================
 
 import asyncio
@@ -229,7 +229,7 @@ CONFIG_DEFAULTS = {
     "notice_history": "⚠️ হিস্ট্রি রেকর্ড বর্তমানে আপডেট করা হচ্ছে।",
     "notice_rules": "⚠️ নিয়মাবলী সেকশন বর্তমানে আপডেট হচ্ছে।",
     "notice_tutorial": "⚠️ টিউটোরিয়াল ভিডিও শীঘ্রই নতুন নিয়মে আপডেট করা হবে।",
-    "notice_support": "⚠️ সাপোর্ট টিম বর্তমানে ব্যস্ত রয়েছে। অনুগ্রহ করে কিছুক্ষণ পর মেসেজ দিন।"
+    "notice_support": "⚠️ সাপোর্ট টিম বর্তমানে ব্যস্ত রয়েছে। অনুগ্রহ করে কিছুক্ষণ পর মেসেজ দিন."
 }
 
 CONFIG_CACHE = {}
@@ -479,7 +479,7 @@ DEFAULT_MESSAGES = {
     ),
     "referral": (
         "👥 **রেফার করে ইনকাম করুন!**\n\n"
-        "আপনার রেফারেল লিংকে জয়েন করা কোনো ইউজার যখন তার প্রথম জিমেইল ফাইল সফলভাবে জমা দিয়ে অ্যাপ্রুভ পাবেন, তখন আপনি পাবেন ৳{bonus} BDT বোনাস।\n\n"
+        "আপনার রেফারেল লিংকে জয়েন করা কোনো ইউজার যখন তার প্রথম জিমেইল ফাইল সফলভাবে জমা দিয়ে অ্যাপ্রুভ পাবেন, তখন আপনি পাবেন ৳{bonus} BDT বোনাস。\n\n"
         "আপনার রেফারেল লিংকটি শেয়ার করুন:\n"
         "🔗 `{link}`"
     )
@@ -1287,9 +1287,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(msg, show_alert=True)
         await show_admin_panel(query, user_id)
 
-    # -------------------------------------------------------------
     # নতুন অ্যাডমিন ফিচার: সম্পূর্ণ বট ডাটা ক্লিয়ার বা নির্দিষ্ট ইউজারের ডাটা মোছা
-    # -------------------------------------------------------------
     elif data == "admin_clear_all_data_prompt":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⚠️ হ্যাঁ, সব ডাটা চিরতরে মুছুন", callback_data="admin_clear_all_data_confirm")],
@@ -1309,7 +1307,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_execute("DELETE FROM submission_admin_messages")
         db_execute("DELETE FROM submitted_emails")
         db_execute("DELETE FROM helpers")
-        init_db() # টেবিলগুলো রি-ক্রিয়েট করে ডিফল্ট সেটিং ফিরিয়ে আনা
+        init_db()
         await query.answer("বটের সকল ডাটা সফলভাবে সম্পূর্ণ ক্লিয়ার করা হয়েছে!", show_alert=True)
         await show_admin_panel(query, user_id)
 
@@ -2369,7 +2367,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ এই ইউজার আইডি বট ডাটাবেজে পাওয়া যায়নি!")
             return
 
-        # ইউজারের সকল ডাটা মুছে ফেলা
         db_execute("DELETE FROM users WHERE user_id=%s", (t_uid,))
         db_execute("DELETE FROM withdrawals WHERE user_id=%s", (t_uid,))
         db_execute("DELETE FROM submissions WHERE user_id=%s", (t_uid,))
@@ -2647,7 +2644,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             t_user, cnt = int(parts[0]), int(parts[1])
             if get_user(t_user):
                 add_manual_referral(t_user, cnt)
-                await update.message.reply_text(f"✅ সফল হয়েছে! ইউজার `{t_user}`-এর অ্যাকাউন্টে {cnt} রেফার যোগ করা হয়েছে።")
+                await update.message.reply_text(f"✅ সফল হয়েছে! ইউজার `{t_user}`-এর অ্যাকাউন্টে {cnt} রেফার যোগ করা হয়েছে।")
             else:
                 await update.message.reply_text("❌ ইউজার ডাটাবেজে পাওয়া যায়নি!")
         else:
@@ -3042,7 +3039,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         m_lim = get_config("max_emails_per_file", int)
         if len(valid_emails) > m_lim:
             await update.message.reply_text(
-                f"❌ ফাইলে {len(valid_emails)}টি জিমেইল রয়েছে।\n"
+                f"❌ ফাইলে {len(valid_emails)}টি জিমেইল রয়েছে。\n"
                 f"একটি ফাইলে সর্বোচ্চ {m_lim}টি জিমেইল দেওয়া অনুমোদিত।"
             )
             return
@@ -3073,7 +3070,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(
             f"✅ ফাইল সফলভাবে জমা হয়েছে!\n\n"
-            f"🔍 মোট ভ্যালিড Gmail: {len(valid_emails)} টি।\n"
+            f"🔍 মোট ভ্যালিড Gmail: {len(valid_emails)} টি。\n"
             f"⏳ অ্যাডমিন প্রাথমিক বাছাইয়ের পর জিমেইলগুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণ করবেন।"
         )
 
@@ -3137,7 +3134,7 @@ async def refinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# MAIN (WEBHOOK MODE)
+# MAIN (WEBHOOK MODE WITH HEALTH CHECK ENDPOINT)
 # =========================================================
 
 def main():
@@ -3162,12 +3159,19 @@ def main():
         clean_url = RENDER_EXTERNAL_URL.rstrip("/")
         webhook_target = f"{clean_url}/{BOT_TOKEN}"
         print(f"Starting Superfast Webhook on port {PORT}: {webhook_target}")
+        
+        # হেলথ চেক রাউট যুক্ত করার জন্য কাস্টম ওয়েব রুট হ্যান্ডলার
+        async def health_check(request):
+            import aiohttp.web
+            return aiohttp.web.Response(text="Bot is running smoothly!", status=200)
+
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
             url_path=BOT_TOKEN,
             webhook_url=webhook_target,
-            allowed_updates=Update.ALL_TYPES
+            allowed_updates=Update.ALL_TYPES,
+            additional_webhook_handlers=[aiohttp.web.RouteDef("GET", "/", health_check, {})]
         )
     else:
         print("Starting Long Polling fallback...")
