@@ -1,6 +1,6 @@
 # =========================================================
 # FILE: bot.py
-# PROJECT: Automated Multi-Stage Gmail Buy/Sell Bot
+# PROJECT: Automated Multi-Stage Gmail Buy/Sell Bot (Super Fast & Admin Optimized)
 # =========================================================
 
 import asyncio
@@ -71,7 +71,7 @@ def get_db_pool():
     if db_pool is None:
         with pool_lock:
             if db_pool is None:
-                db_pool = SimpleConnectionPool(1, 15, DATABASE_URL)
+                db_pool = SimpleConnectionPool(1, 20, DATABASE_URL)
     return db_pool
 
 def db_execute(query, params=(), fetchone=False, fetchall=False):
@@ -246,14 +246,14 @@ def get_config(key, as_type=float):
 
     res = db_execute("SELECT value FROM settings WHERE key=%s", (key,), fetchone=True)
     val = res["value"] if res else CONFIG_DEFAULTS.get(key, "0")
-    CONFIG_CACHE[key] = (val, now + timedelta(seconds=60))
+    CONFIG_CACHE[key] = (val, now + timedelta(seconds=120))
     try:
         return as_type(val)
     except (ValueError, TypeError):
         return as_type(CONFIG_DEFAULTS.get(key, "0"))
 
 def set_config(key, val):
-    CONFIG_CACHE[key] = (str(val), datetime.now() + timedelta(seconds=60))
+    CONFIG_CACHE[key] = (str(val), datetime.now() + timedelta(seconds=120))
     db_execute("""
         INSERT INTO settings (key, value) VALUES (%s, %s)
         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value
@@ -643,7 +643,7 @@ async def is_user_joined_all(bot, user_id):
     try:
         ch_joined, gr_joined = await asyncio.wait_for(
             asyncio.gather(check_channel(), check_group()),
-            timeout=2.5
+            timeout=2.0
         )
         return ch_joined and gr_joined
     except Exception:
@@ -1050,6 +1050,10 @@ async def show_admin_panel(query, user_id):
             InlineKeyboardButton("✉️ Single Message", callback_data="admin_single_message"),
             InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ", callback_data="admin_clear_cache")
         ],
+        [
+            InlineKeyboardButton("🗑️ সম্পূর্ণ বট ডাটা ক্লিয়ার", callback_data="admin_clear_all_data_prompt"),
+            InlineKeyboardButton("👤 নির্দিষ্ট ইউজারের ডাটা মুছুন", callback_data="admin_clear_user_data_prompt")
+        ],
         [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")]
     ]
 
@@ -1284,8 +1288,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_admin_panel(query, user_id)
 
     # -------------------------------------------------------------
-    # অ্যাডমিন প্যানেল: পেন্ডিং উইথড্র তালিকা ও প্রসেসিং
+    # নতুন অ্যাডমিন ফিচার: সম্পূর্ণ বট ডাটা ক্লিয়ার বা নির্দিষ্ট ইউজারের ডাটা মোছা
     # -------------------------------------------------------------
+    elif data == "admin_clear_all_data_prompt":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚠️ হ্যাঁ, সব ডাটা চিরতরে মুছুন", callback_data="admin_clear_all_data_confirm")],
+            [InlineKeyboardButton("❌ বাতিল", callback_data="admin_panel")]
+        ])
+        await query.edit_message_text(
+            "⚠️ **সতর্কতা: সম্পূর্ণ বট ডাটাবেজ ক্লিয়ার করা!**\n\n"
+            "আপনি কি নিশ্চিত যে আপনি সকল ইউজার, সাবমিশন ফাইল, উইথড্র রিকোয়েস্ট এবং হিস্ট্রি চিরতরে মুছে ফেলতে চান? এটি আর ফিরিয়ে আনা যাবে না!",
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+
+    elif data == "admin_clear_all_data_confirm":
+        db_execute("DELETE FROM users")
+        db_execute("DELETE FROM withdrawals")
+        db_execute("DELETE FROM submissions")
+        db_execute("DELETE FROM submission_admin_messages")
+        db_execute("DELETE FROM submitted_emails")
+        db_execute("DELETE FROM helpers")
+        init_db() # টেবিলগুলো রি-ক্রিয়েট করে ডিফল্ট সেটিং ফিরিয়ে আনা
+        await query.answer("বটের সকল ডাটা সফলভাবে সম্পূর্ণ ক্লিয়ার করা হয়েছে!", show_alert=True)
+        await show_admin_panel(query, user_id)
+
+    elif data == "admin_clear_user_data_prompt":
+        context.user_data["state"] = "waiting_clear_user_id"
+        await query.edit_message_text(
+            "👤 **নির্দিষ্ট ইউজারের সমস্ত ডাটা মুছুন:**\n\n"
+            "যে ইউজারের ডাটা (প্রোফাইল, ব্যালেন্স, সাবমিশন, উইথড্র) মুছে ফেলতে চান তার **টেলিগ্রাম ইউজার আইডি (Numeric ID)** লিখে পাঠান:\n\n"
+            "(বাতিল করতে /cancel পাঠান)",
+            parse_mode="Markdown"
+        )
+
+    # পেন্ডিং উইথড্র তালিকা ও প্রসেসিং
     elif data == "admin_pending_withdraws":
         wds = db_execute("SELECT * FROM withdrawals WHERE status='pending' ORDER BY id ASC", fetchall=True)
         if not wds:
@@ -1476,7 +1513,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    # সকল হিস্ট্রি মোছা
     elif data == "adm_clear_all_subs_prompt":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⚠️ হ্যাঁ, সব ফাইল মুছুন", callback_data="adm_clear_all_subs_confirm")],
@@ -1484,7 +1520,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
         await query.edit_message_text(
             "⚠️ **সতর্কতা: সকল সাবমিশন ফাইল হিস্ট্রি মুছে ফেলা!**\n\n"
-            "আপনি কি নিশ্চিত যে আপনি ডাটাবেজ থেকে অতীতের সকল ফাইলের হিস্ট্রি চিরতরে মুছে ফেলতে চান? এটি পুনরুদ্ধার করা সম্ভব হবে না।",
+            "আপনি কি নিশ্চিত যে আপনি ডাটাবেজ থেকে অতীতের সকল ফাইলের হিস্ট্রি চিরতরে মুছে ফেলতে চান?",
             reply_markup=kb,
             parse_mode="Markdown"
         )
@@ -1496,7 +1532,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query.data = "admin_file_history:0"
         await button_handler(update, context)
 
-    # উইথড্র অনুমোদন ও বাতিল
     elif data.startswith("approve_withdraw:"):
         w_id = int(data.split(":")[1])
         w = db_execute("SELECT * FROM withdrawals WHERE id=%s", (w_id,), fetchone=True)
@@ -1566,7 +1601,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:1:{sub_id}")])
         elif sub["status"] == "stage2_review":
             kb.append([InlineKeyboardButton("🔍 ধাপ ৩: চূড়ান্ত অনুমোদন শুরু করুন", callback_data=f"sub_s3_open:{sub_id}")])
-            kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")])
+            kb.append([InlineKeyboardButton("❌ পুরো ফাইল বাতিল", callback_data=f"sub_rj_all_prompt:2:{sub_id}")] )
         kb.append([InlineKeyboardButton("⬅️ পেন্ডিং লিস্ট", callback_data="admin_pending_files")])
 
         await query.edit_message_text(
@@ -2323,6 +2358,29 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("বাতিল করা হয়েছে।", reply_markup=get_bottom_keyboard(user.id))
         return
 
+    # নির্দিষ্ট ইউজারের ডাটা ডিলিট করার প্রম্পট হ্যান্ডলার
+    if is_admin(user.id) and state == "waiting_clear_user_id":
+        if not text.isdigit():
+            await update.message.reply_text("❌ সঠিক সংখ্যায় টেলিগ্রাম আইডি দিন:")
+            return
+        t_uid = int(text)
+        t_usr = get_user(t_uid)
+        if not t_usr:
+            await update.message.reply_text("❌ এই ইউজার আইডি বট ডাটাবেজে পাওয়া যায়নি!")
+            return
+
+        # ইউজারের সকল ডাটা মুছে ফেলা
+        db_execute("DELETE FROM users WHERE user_id=%s", (t_uid,))
+        db_execute("DELETE FROM withdrawals WHERE user_id=%s", (t_uid,))
+        db_execute("DELETE FROM submissions WHERE user_id=%s", (t_uid,))
+        context.user_data.clear()
+
+        await update.message.reply_text(
+            f"✅ ইউজার ID `{t_uid}` এর সমস্ত ডাটা (প্রোফাইল, ব্যালেন্স, সাবমিশন ও উইথড্র হিস্ট্রি) সফলভাবে মুছে ফেলা হয়েছে!",
+            parse_mode="Markdown"
+        )
+        return
+
     # বাটনভিত্তিক ব্যালেন্স ম্যানেজমেন্ট
     if is_admin(user.id) and state == "waiting_bal_uid":
         if not text.isdigit():
@@ -2589,7 +2647,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             t_user, cnt = int(parts[0]), int(parts[1])
             if get_user(t_user):
                 add_manual_referral(t_user, cnt)
-                await update.message.reply_text(f"✅ সফল হয়েছে! ইউজার `{t_user}`-এর অ্যাকাউন্টে {cnt} রেফার যোগ করা হয়েছে।")
+                await update.message.reply_text(f"✅ সফল হয়েছে! ইউজার `{t_user}`-এর অ্যাকাউন্টে {cnt} রেফার যোগ করা হয়েছে።")
             else:
                 await update.message.reply_text("❌ ইউজার ডাটাবেজে পাওয়া যায়নি!")
         else:
@@ -3085,7 +3143,7 @@ async def refinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     init_db()
 
-    application = Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token(BOT_TOKEN).concurrent_updates(True).build()
 
     application.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
     application.add_handler(CommandHandler("admin", admin, filters=filters.ChatType.PRIVATE))
