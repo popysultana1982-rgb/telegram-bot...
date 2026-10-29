@@ -3636,7 +3636,7 @@ def main():
     
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler))
 
-   if RENDER_EXTERNAL_URL:
+    if RENDER_EXTERNAL_URL:
         clean_url = RENDER_EXTERNAL_URL.rstrip("/")
         webhook_target = f"{clean_url}/{BOT_TOKEN}"
         print(f"Starting Superfast Webhook on port {PORT}: {webhook_target}")
@@ -3651,3 +3651,7 @@ def main():
     else:
         print("Starting Long Polling fallback...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()
