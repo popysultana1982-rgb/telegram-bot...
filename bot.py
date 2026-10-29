@@ -13,6 +13,7 @@ import threading
 from datetime import datetime, timedelta
 
 import aiohttp
+from aiohttp import web
 import openpyxl
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -3641,7 +3642,7 @@ def main():
         print(f"Starting Superfast Webhook on port {PORT}: {webhook_target}")
         
         async def health_check(request):
-            return aiohttp.web.Response(text="Bot is running smoothly!", status=200)
+            return web.Response(text="Bot is running smoothly!", status=200)
 
         application.run_webhook(
             listen="0.0.0.0",
@@ -3649,7 +3650,7 @@ def main():
             url_path=BOT_TOKEN,
             webhook_url=webhook_target,
             allowed_updates=Update.ALL_TYPES,
-            additional_webhook_handlers=[aiohttp.web.RouteDef("GET", "/", health_check, {})]
+            additional_webhook_handlers=[web.RouteDef("GET", "/", health_check, {})]
         )
     else:
         print("Starting Long Polling fallback...")
