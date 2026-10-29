@@ -3636,13 +3636,10 @@ def main():
     
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler))
 
-    if RENDER_EXTERNAL_URL:
+   if RENDER_EXTERNAL_URL:
         clean_url = RENDER_EXTERNAL_URL.rstrip("/")
         webhook_target = f"{clean_url}/{BOT_TOKEN}"
         print(f"Starting Superfast Webhook on port {PORT}: {webhook_target}")
-        
-        async def health_check(request):
-            return web.Response(text="Bot is running smoothly!", status=200)
 
         application.run_webhook(
             listen="0.0.0.0",
@@ -3650,12 +3647,7 @@ def main():
             url_path=BOT_TOKEN,
             webhook_url=webhook_target,
             allowed_updates=Update.ALL_TYPES,
-            additional_webhook_handlers=[web.RouteDef("GET", "/", health_check, {})]
         )
     else:
         print("Starting Long Polling fallback...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    main()
