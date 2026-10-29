@@ -2731,18 +2731,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     rate = get_config("email_rate", float)
 
-    # ভাষা পরিবর্তন হ্যান্ডলার (Language Toggle)
+    # ভাষা পরিবর্তন মেনু (Language Selection Menu)
     btn_lang_bn = DEFAULT_BUTTON_TITLES["bn"]["lang"]
     btn_lang_en = DEFAULT_BUTTON_TITLES["en"]["lang"]
-    if text in [btn_lang_bn, btn_lang_en] or "ভাষা:" in text or "Language:" in text:
-        new_lang = 'en' if lang == 'bn' else 'bn'
-        set_user_lang(user.id, new_lang)
-        success_txt = (
-            "✅ ভাষা সফলভাবে ইংরেজিতে পরিবর্তন করা হয়েছে!"
-            if new_lang == 'en' else
-            "✅ ভাষা সফলভাবে বাংলায় পরিবর্তন করা হয়েছে!"
+    if text in [btn_lang_bn, btn_lang_en] or "Change Language" in text or "ভাষা" in text or "Language" in text:
+        lang_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🇧🇩 বাংলা (Bangla)", callback_data="set_lang:bn")],
+            [InlineKeyboardButton("🇺🇸 English", callback_data="set_lang:en")]
+        ])
+        await update.message.reply_text(
+            "আপনার ভাষা নির্বাচন করুন:\nSelect your language:",
+            reply_markup=lang_kb
         )
-        await update.message.reply_text(success_txt, reply_markup=get_bottom_keyboard(user.id, new_lang))
         return
 
     if text == "🔐 ADMIN PANEL" and is_admin(user.id):
