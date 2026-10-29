@@ -1267,13 +1267,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
-    if data == "dismiss_msg":
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        return
-if data == "dismiss_msg":
+   if data == "dismiss_msg":
         try:
             await query.message.delete()
         except Exception:
@@ -1300,7 +1294,6 @@ if data == "dismiss_msg":
         )
         return
 
-    if data == "check_joined":
     if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         lang = get_user_lang(user_id)
