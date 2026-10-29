@@ -1273,7 +1273,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         return
+if data == "dismiss_msg":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        return
 
+    if data.startswith("set_lang:"):
+        new_lang = data.split(":")[1]
+        set_user_lang(user_id, new_lang)
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        if new_lang == "en":
+            success_msg = "✅ Language successfully changed to English!"
+        else:
+            success_msg = "✅ ভাষা সফলভাবে বাংলায় পরিবর্তন করা হয়েছে!"
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=success_msg,
+            reply_markup=get_bottom_keyboard(user_id, new_lang)
+        )
+        return
+
+    if data == "check_joined":
     if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         lang = get_user_lang(user_id)
