@@ -1267,7 +1267,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
-   if data == "dismiss_msg":
+    if data == "dismiss_msg":
         try:
             await query.message.delete()
         except Exception:
