@@ -561,26 +561,26 @@ DEFAULT_MESSAGES = {
 
 DEFAULT_BUTTON_TITLES = {
     "bn": {
-        "sell": "📩 SELL FRESH GMAIL ACCOUNT",
-        "balance": "💰 BALANCE",
-        "withdraw": "💸 WITHDRAW",
+        "sell": "📩 জিমেইল সেল করুন",
+        "balance": "💰 ব্যালেন্স",
+        "withdraw": "💸 উইথড্র",
         "history": "📜 হিস্ট্রি",
-        "referral": "👥 REFERRAL",
-        "rules": "📜 RULES",
-        "tutorial": "▶️ TUTORIAL",
-        "support": "📞 SUPPORT",
-        "lang": "🇧🇩 ভাষা: বাংলা"
+        "referral": "🤝 আমার রেফারেল",
+        "rules": "📜 নিয়মাবলী",
+        "tutorial": "▶️ টিউটোরিয়াল",
+        "support": "📞 সাপোর্ট",
+        "lang": "🌐 Change Language"
     },
     "en": {
         "sell": "📩 SELL FRESH GMAIL ACCOUNT",
         "balance": "💰 BALANCE",
         "withdraw": "💸 WITHDRAW",
         "history": "📜 History",
-        "referral": "👥 REFERRAL",
+        "referral": "🤝 My Referral",
         "rules": "📜 RULES",
         "tutorial": "▶️ TUTORIAL",
         "support": "📞 SUPPORT",
-        "lang": "🇺🇸 Language: English"
+        "lang": "🌐 Change Language"
     }
 }
 
