@@ -107,6 +107,7 @@ def init_db():
             referred_by BIGINT DEFAULT NULL,
             ref_bonus_rewarded INTEGER DEFAULT 0,
             seen_rules INTEGER DEFAULT 0,
+            language TEXT DEFAULT 'bn',
             created_at TEXT
         )
     """)
@@ -183,6 +184,7 @@ def init_db():
 
     try:
         db_execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS ref_bonus_rewarded INTEGER DEFAULT 0")
+        db_execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'bn'")
     except Exception:
         pass
 
@@ -269,11 +271,15 @@ def toggle_button_switch(btn_key):
     set_config(f"switch_{btn_key}", new_val)
     return new_val == 1
 
-def get_button_closed_notice(btn_key):
+def get_button_closed_notice(btn_key, lang='bn'):
     res = db_execute("SELECT value FROM settings WHERE key=%s", (f"notice_{btn_key}",), fetchone=True)
-    if res and res["value"]:
-        return res["value"]
-    return CONFIG_DEFAULTS.get(f"notice_{btn_key}", "⚠️ এই অপশনটি বর্তমানে সাময়িকভাবে বন্ধ আছে।")
+    notice = res["value"] if (res and res["value"]) else CONFIG_DEFAULTS.get(f"notice_{btn_key}", "⚠️ এই অপশনটি বর্তমানে সাময়িকভাবে বন্ধ আছে।")
+    if lang == 'en':
+        if "বন্ধ আছে" in notice or "বন্ধ" in notice:
+            return "⚠️ This option is temporarily closed."
+        elif "মেইনটেন্যান্সে" in notice:
+            return "⚠️ Payment & withdrawal system is currently under maintenance. Will be available soon."
+    return notice
 
 def is_button_visible(btn_key):
     return get_config(f"show_btn_{btn_key}", int) == 1
@@ -418,72 +424,163 @@ def create_rejected_excel(rejected_items):
 
 
 # =========================================================
-# MESSAGES & BUTTON TITLES
+# MESSAGES & BUTTON TITLES (MULTI-LANGUAGE SUPPORT)
 # =========================================================
 
 DEFAULT_MESSAGES = {
-    "welcome": (
-        "আসসালামু আলাইকুম, {name}! 🌸\n\n"
-        "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
-        "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করে নিরাপদভাবে টাকা ইনকাম করতে পারবেন।\n\n"
-        "📜 **আমাদের জিমেইল সাবমিশন ও কাজের নিয়মাবলী:**\n"
-        "১. ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই করবেন এবং লগইন করা যায় এমন মেইলগুলো পর্যালোচনায় রাখবেন।\n"
-        "২. প্রাথমিক বাছায়ে যেসব জিমেইলে সমস্যা থাকবে, সেগুলো কারণসহ সাথে সাথে বাতিল করে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
-        "৩. পর্যালোচনায় রাখা জিমেইলগুলো পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে।\n"
-        "৪. ২৪ থেকে ৪৮ ঘণ্টার পর্যবেক্ষণ সময়ে ব্যালেন্স যোগ হবে না।\n"
-        "৫. পর্যবেক্ষণ শেষে যেসব জিমেইল অক্ষত থাকবে, প্রতিটির জন্য ৳{rate} টাকা ব্যালেন্সে যোগ হবে! 💰\n"
-        "৬. শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে কারণসহ এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
-        "৭. প্রতিদিন সর্বোচ্চ {daily_limit}টি ফাইল এবং প্রতি ফাইলে সর্বোচ্চ {email_limit}টি ভ্যালিড Gmail দিতে পারবেন।\n"
-        "৮. একবার জমা দেওয়া জিমেইল আগামী {cooldown} দিনের মধ্যে পুনরায় সাবমিট করা যাবে না।"
-    ),
-    "rules": (
-        "📜 **আমাদের কাজের নিয়মাবলী ও শর্তাবলী:**\n\n"
-        "১️⃣ ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই সম্পন্ন করবেন।\n"
-        "২️⃣ সমস্যা থাকা Gmail প্রথম ধাপেই নির্দিষ্ট কারণসহ বাতিল করা হবে এবং Excel ফাইলে ফেরত দেওয়া হবে।\n"
-        "৩️⃣ নির্বাচিত Gmail-গুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণে থাকবে।\n"
-        "৪️⃣ পর্যবেক্ষণ শেষে সঠিক ও অনুমোদিত প্রতিটি Gmail-এর জন্য ৳{rate} টাকা ব্যালেন্সে যোগ করা হবে।\n"
-        "৫️⃣ পর্যবেক্ষণের শেষ ধাপে সমস্যা পাওয়া Gmail-গুলো কারণসহ Excel ফাইলে ফেরত দেওয়া হবে।\n"
-        "৬️⃣ এক ফাইলে সর্বোচ্চ {email_limit}টি @gmail.com এবং প্রতিদিন সর্বোচ্চ {daily_limit}টি ফাইল সাবমিট করা যাবে।\n"
-        "৭️⃣ বিগত {cooldown} দিনের মধ্যে জমা দেওয়া Gmail পুনরায় গ্রহণযোগ্য নয়।\n\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "⚠️ 📌 **বিশেষ দ্রষ্টব্য (IMPORTANT NOTICE)**\n"
-        "✅ **শুধুমাত্র নিজের ফোনে, নিজের স্বাভাবিক নেটওয়ার্ক/IP ব্যবহার করে নিয়মিত ও বৈধভাবে তৈরি করা আসল Gmail অ্যাকাউন্ট সাবমিট করবেন।**\n"
-        "❌ **কোনো ধরনের পদ্ধতি ব্যবহার করে তৈরি করা, অস্বাভাবিক, ভুয়া বা সন্দেহজনক Gmail অ্যাকাউন্ট সাবমিট করবেন না।**\n"
-        "🚫 **অন্যের অ্যাকাউন্ট, অননুমোদিত পদ্ধতিতে তৈরি অ্যাকাউন্ট কিংবা যেসব Gmail-এ স্বাভাবিকভাবে লগইন করতে সমস্যা হয়, সেগুলো সাবমিট করা থেকে বিরত থাকুন।**\n"
-        "📌 **নিয়ম না মেনে Gmail সাবমিট করলে তা বাতিল হতে পারে। তাই ফাইল জমা দেওয়ার আগে সব নিয়ম ভালোভাবে পড়ে নিন।**\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "❤️ সবার সহযোগিতা কামনা করছি। ধন্যবাদ।\n"
-        "🤖 BOT ADMIN TEAM"
-    ),
-    "sell": (
-        "📤 **আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।**\n\n"
-        "💰 প্রতি ভ্যালিড জিমেইল রেট: ৳{rate} BDT\n"
-        "⚠️ এক ফাইলে সর্বোচ্চ {email_limit}টি @gmail.com থাকতে হবে। বিগত {cooldown} দিনের মধ্যে জমা দেওয়া কোনো মেইল গ্রহণ করা হবে না।\n\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🚨 **জরুরি নির্দেশনা (MUST READ):**\n"
-        "⚠️ **ফাইলে থাকা জিমেইলগুলো বটে সাবমিট করার আগে অবশ্যই আপনার ফোন থেকে সম্পূর্ণ রিমুভ (Logout/Remove) করতে হবে!**\n\n"
-        "⚠️ 📌 **বিশেষ দ্রষ্টব্য (IMPORTANT NOTICE):**\n"
-        "✅ শুধুমাত্র নিজের ফোনে, নিজের স্বাভাবিক নেটওয়ার্ক/IP ব্যবহার করে নিয়মিত ও বৈধভাবে তৈরি করা আসল Gmail অ্যাকাউন্ট সাবমিট করবেন।\n"
-        "❌ কোনো ধরনের ক্লোন, সফটওয়্যার বা অস্বাভাবিক পদ্ধতিতে তৈরি করা ভুয়া বা সন্দেহজনক Gmail অ্যাকাউন্ট সাবমিট করবেন না।\n"
-        "🚫 অন্যের অ্যাকাউন্ট বা লগইন সমস্যাযুক্ত জিমেইল জমা দিলে সম্পূর্ণ ফাইল বাতিল হয়ে যাবে।\n"
-        "━━━━━━━━━━━━━━━━━━"
-    ),
-    "support": "যেকোনো সমস্যা, প্রশ্ন বা সহায়তার জন্য নিচে থাকা বাটনে ক্লিক করে সাপোর্টে মেসেজ পাঠান:",
-    "tutorial": (
-        "🎥 **ভিডিও টিউটোরিয়াল ও কাজের গাইড:**\n\n"
-        "বটে কীভাবে কাজ করবেন, কীভাবে জিমেইল ফাইল তৈরি করবেন এবং কীভাবে টাকা উইথড্র করবেন তা বিস্তারিত দেখতে নিচের বাটনে ক্লিক করুন:"
-    ),
-    "maintenance": (
-        "⚠️ **বট আপডেটের কাজ চলছে!** 🛠\n\n"
-        "সম্মানিত ইউজার, আমাদের সিস্টেমে জরুরি আপডেটের কাজ চলছে। "
-        "সাময়িকভাবে বটের কার্যক্রম স্থগিত রয়েছে। কাজ সম্পন্ন হওয়ামাত্রই বট পুনরায় চালু হবে।"
-    ),
-    "referral": (
-        "👥 **রেফার করে ইনকাম করুন!**\n\n"
-        "আপনার রেফারেল লিংকে জয়েন করা কোনো ইউজার যখন তার প্রথম জিমেইল ফাইল সফলভাবে জমা দিয়ে অ্যাপ্রুভ পাবেন, তখন আপনি পাবেন ৳{bonus} BDT বোনাস。\n\n"
-        "আপনার রেফারেল লিংকটি শেয়ার করুন:\n"
-        "🔗 `{link}`"
-    )
+    "bn": {
+        "welcome": (
+            "আসসালামু আলাইকুম, {name}! 🌸\n\n"
+            "💙 আপনাকে স্বাগতম আমাদের Gmail Sell Bot-এ!\n"
+            "এখানে আপনি আপনার তৈরি করা Valid Gmail Account সেল/সাবমিট করে নিরাপদভাবে টাকা ইনকাম করতে পারবেন।\n\n"
+            "📜 **আমাদের জিমেইল সাবমিশন ও কাজের নিয়মাবলী:**\n"
+            "১. ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই করবেন এবং লগইন করা যায় এমন মেইলগুলো পর্যালোচনায় রাখবেন।\n"
+            "২. প্রাথমিক বাছায়ে যেসব জিমেইলে সমস্যা থাকবে, সেগুলো কারণসহ সাথে সাথে বাতিল করে এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
+            "৩. পর্যালোচনায় রাখা জিমেইলগুলো পরবর্তী ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে।\n"
+            "৪. ২৪ থেকে ৪৮ ঘণ্টার পর্যবেক্ষণ সময়ে ব্যালেন্স যোগ হবে না।\n"
+            "৫. পর্যবেক্ষণ শেষে যেসব জিমেইল অক্ষত থাকবে, প্রতিটির জন্য ৳{rate} টাকা ব্যালেন্সে যোগ হবে! 💰\n"
+            "৬. শেষ ধাপে কোনো জিমেইল নষ্ট হলে তা আপনাকে কারণসহ এক্সেল ফাইলে ফেরত দেওয়া হবে।\n"
+            "৭. প্রতিদিন সর্বোচ্চ {daily_limit}টি ফাইল এবং প্রতি ফাইলে সর্বোচ্চ {email_limit}টি ভ্যালিড Gmail দিতে পারবেন।\n"
+            "৮. একবার জমা দেওয়া জিমেইল আগামী {cooldown} দিনের মধ্যে পুনরায় সাবমিট করা যাবে না।"
+        ),
+        "rules": (
+            "📜 **আমাদের কাজের নিয়মাবলী ও শর্তাবলী:**\n\n"
+            "১️⃣ ফাইল সাবমিটের পর অ্যাডমিন প্রাথমিক বাছাই সম্পন্ন করবেন।\n"
+            "২️⃣ সমস্যা থাকা Gmail প্রথম ধাপেই নির্দিষ্ট কারণসহ বাতিল করা হবে এবং Excel ফাইলে ফেরত দেওয়া হবে।\n"
+            "৩️⃣ নির্বাচিত Gmail-গুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণে থাকবে।\n"
+            "৪️⃣ পর্যবেক্ষণ শেষে সঠিক ও অনুমোদিত প্রতিটি Gmail-এর জন্য ৳{rate} টাকা ব্যালেন্সে যোগ করা হবে।\n"
+            "৫️⃣ পর্যবেক্ষণের শেষ ধাপে সমস্যা পাওয়া Gmail-গুলো কারণসহ Excel ফাইলে ফেরত দেওয়া হবে।\n"
+            "৬️⃣ এক ফাইলে সর্বোচ্চ {email_limit}টি @gmail.com এবং প্রতিদিন সর্বোচ্চ {daily_limit}টি ফাইল সাবমিট করা যাবে।\n"
+            "৭️⃣ বিগত {cooldown} দিনের মধ্যে জমা দেওয়া Gmail পুনরায় গ্রহণযোগ্য নয়।\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ 📌 **বিশেষ দ্রষ্টব্য (IMPORTANT NOTICE)**\n"
+            "✅ **শুধুমাত্র নিজের ফোনে, নিজের স্বাভাবিক নেটওয়ার্ক/IP ব্যবহার করে নিয়মিত ও বৈধভাবে তৈরি করা আসল Gmail অ্যাকাউন্ট সাবমিট করবেন।**\n"
+            "❌ **কোনো ধরনের পদ্ধতি ব্যবহার করে তৈরি করা, অস্বাভাবিক, ভুয়া বা সন্দেহজনক Gmail অ্যাকাউন্ট সাবমিট করবেন না।**\n"
+            "🚫 **অন্যের অ্যাকাউন্ট, অননুমোদিত পদ্ধতিতে তৈরি অ্যাকাউন্ট কিংবা যেসব Gmail-এ স্বাভাবিকভাবে লগইন করতে সমস্যা হয়, সেগুলো সাবমিট করা থেকে বিরত থাকুন।**\n"
+            "📌 **নিয়ম না মেনে Gmail সাবমিট করলে তা বাতিল হতে পারে। তাই ফাইল জমা দেওয়ার আগে সব নিয়ম ভালোভাবে পড়ে নিন।**\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "❤️ সবার সহযোগিতা কামনা করছি। ধন্যবাদ।\n"
+            "🤖 BOT ADMIN TEAM"
+        ),
+        "sell": (
+            "📤 **আপনার ফ্রেশ জিমেইল সম্বলিত এক্সেল বা সিএসভি ফাইল (.xlsx, .xls, .csv) পাঠান।**\n\n"
+            "💰 প্রতি ভ্যালিড জিমেইল রেট: ৳{rate} BDT\n"
+            "⚠️ এক ফাইলে সর্বোচ্চ {email_limit}টি @gmail.com থাকতে হবে। বিগত {cooldown} দিনের মধ্যে জমা দেওয়া কোনো মেইল গ্রহণ করা হবে না।\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🚨 **জরুরি নির্দেশনা (MUST READ):**\n"
+            "⚠️ **ফাইলে থাকা জিমেইলগুলো বটে সাবমিট করার আগে অবশ্যই আপনার ফোন থেকে সম্পূর্ণ রিমুভ (Logout/Remove) করতে হবে!**\n\n"
+            "⚠️ 📌 **বিশেষ দ্রষ্টব্য (IMPORTANT NOTICE):**\n"
+            "✅ শুধুমাত্র নিজের ফোনে, নিজের স্বাভাবিক নেটওয়ার্ক/IP ব্যবহার করে নিয়মিত ও বৈধভাবে তৈরি করা আসল Gmail অ্যাকাউন্ট সাবমিট করবেন।\n"
+            "❌ কোনো ধরনের ক্লোন, সফটওয়্যার বা অস্বাভাবিক পদ্ধতিতে তৈরি করা ভুয়া বা সন্দেহজনক Gmail অ্যাকাউন্ট সাবমিট করবেন না।\n"
+            "🚫 অন্যের অ্যাকাউন্ট বা লগইন সমস্যাযুক্ত জিমেইল জমা দিলে সম্পূর্ণ ফাইল বাতিল হয়ে যাবে।\n"
+            "━━━━━━━━━━━━━━━━━━"
+        ),
+        "support": "যেকোনো সমস্যা, প্রশ্ন বা সহায়তার জন্য নিচে থাকা বাটনে ক্লিক করে সাপোর্টে মেসেজ পাঠান:",
+        "tutorial": (
+            "🎥 **ভিডিও টিউটোরিয়াল ও কাজের গাইড:**\n\n"
+            "বটে কীভাবে কাজ করবেন, কীভাবে জিমেইল ফাইল তৈরি করবেন এবং কীভাবে টাকা উইথড্র করবেন তা বিস্তারিত দেখতে নিচের বাটনে ক্লিক করুন:"
+        ),
+        "maintenance": (
+            "⚠️ **বট আপডেটের কাজ চলছে!** 🛠\n\n"
+            "সম্মানিত ইউজার, আমাদের সিস্টেমে জরুরি আপডেটের কাজ চলছে। "
+            "সাময়িকভাবে বটের কার্যক্রম স্থগিত রয়েছে। কাজ সম্পন্ন হওয়ামাত্রই বট পুনরায় চালু হবে।"
+        ),
+        "referral": (
+            "👥 **রেফার করে ইনকাম করুন!**\n\n"
+            "আপনার রেফারেল লিংকে জয়েন করা কোনো ইউজার যখন তার প্রথম জিমেইল ফাইল সফলভাবে জমা দিয়ে অ্যাপ্রুভ পাবেন, তখন আপনি পাবেন ৳{bonus} BDT বোনাস。\n\n"
+            "আপনার রেফারেল লিংকটি শেয়ার করুন:\n"
+            "🔗 `{link}`"
+        )
+    },
+    "en": {
+        "welcome": (
+            "Assalamu Alaikum, {name}! 🌸\n\n"
+            "💙 Welcome to our Gmail Sell Bot!\n"
+            "Here you can earn money securely by selling/submitting valid Gmail accounts created by you.\n\n"
+            "📜 **Our Gmail Submission & Work Rules:**\n"
+            "1. After file submission, admin will do initial screening and keep login-working emails in review.\n"
+            "2. Problematic emails in initial screening will be rejected instantly with reason and returned in an Excel file.\n"
+            "3. Reviewed emails will remain under admin observation for the next 24 to 48 hours.\n"
+            "4. Balance will not be added during the 24-48 hours observation period.\n"
+            "5. After observation, for each intact Gmail, ৳{rate} BDT will be added to your balance! 💰\n"
+            "6. If any Gmail fails in the final step, it will be returned to you in an Excel file with reason.\n"
+            "7. You can submit a maximum of {daily_limit} files per day and up to {email_limit} valid Gmails per file.\n"
+            "8. Once submitted, a Gmail cannot be re-submitted within the next {cooldown} days."
+        ),
+        "rules": (
+            "📜 **Our Rules & Terms:**\n\n"
+            "1️⃣ Admin will complete initial screening after file submission.\n"
+            "2️⃣ Problematic Gmails will be rejected in the first step with specific reasons and returned in an Excel file.\n"
+            "3️⃣ Selected Gmails will remain under observation for 24 to 48 hours.\n"
+            "4️⃣ After observation, ৳{rate} BDT will be added to the balance for each correct and approved Gmail.\n"
+            "5️⃣ Gmails found with issues at the final observation step will be returned in an Excel file with reasons.\n"
+            "6️⃣ Maximum {email_limit} @gmail.com per file and {daily_limit} files per day can be submitted.\n"
+            "7️⃣ Gmail submitted within the last {cooldown} days is not acceptable again.\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ 📌 **IMPORTANT NOTICE**\n"
+            "✅ **Submit only genuine Gmail accounts created regularly and legally on your own phone using your normal network/IP.**\n"
+            "❌ **Do not submit fake, unusual, or suspicious Gmail accounts created using automated methods.**\n"
+            "🚫 **Avoid submitting other people's accounts, unauthorized accounts, or Gmails with login issues.**\n"
+            "📌 **Submitting Gmails bypassing rules may lead to cancellation. Read all rules carefully before submitting.**\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "❤️ Thank you for your cooperation.\n"
+            "🤖 BOT ADMIN TEAM"
+        ),
+        "sell": (
+            "📤 **Send your Excel or CSV file (.xlsx, .xls, .csv) containing fresh Gmails.**\n\n"
+            "💰 Rate per valid Gmail: ৳{rate} BDT\n"
+            "⚠️ Maximum {email_limit} @gmail.com per file. Mails submitted within the last {cooldown} days will not be accepted.\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🚨 **MUST READ:**\n"
+            "⚠️ **Before submitting Gmails from the file to the bot, you must completely remove (Logout/Remove) them from your phone!**\n\n"
+            "⚠️ 📌 **IMPORTANT NOTICE:**\n"
+            "✅ Submit only genuine Gmail accounts created legally on your own device.\n"
+            "❌ Do not submit fake or clone-based Gmails.\n"
+            "🚫 Submitting unauthorized or problem-locked accounts will cancel the entire file.\n"
+            "━━━━━━━━━━━━━━━━━━"
+        ),
+        "support": "For any issues, questions or support, click the button below to message support:",
+        "tutorial": (
+            "🎥 **Video Tutorial & Guide:**\n\n"
+            "To see in detail how to work in the bot, create Gmail files, and withdraw money, click the button below:"
+        ),
+        "maintenance": (
+            "⚠️ **Bot Update in Progress!** 🛠\n\n"
+            "Dear user, emergency system updates are underway. "
+            "Bot operations are temporarily suspended. It will be back online shortly."
+        ),
+        "referral": (
+            "👥 **Earn by Referring!**\n\n"
+            "When a user who joined via your referral link successfully submits their first Gmail file and gets approved, you receive a ৳{bonus} BDT bonus.\n\n"
+            "Share your referral link:\n"
+            "🔗 `{link}`"
+        )
+    }
+}
+
+DEFAULT_BUTTON_TITLES = {
+    "bn": {
+        "sell": "📩 SELL FRESH GMAIL ACCOUNT",
+        "balance": "💰 BALANCE",
+        "withdraw": "💸 WITHDRAW",
+        "history": "📜 হিস্ট্রি",
+        "referral": "👥 REFERRAL",
+        "rules": "📜 RULES",
+        "tutorial": "▶️ TUTORIAL",
+        "support": "📞 SUPPORT",
+        "lang": "🇧🇩 ভাষা: বাংলা"
+    },
+    "en": {
+        "sell": "📩 SELL FRESH GMAIL ACCOUNT",
+        "balance": "💰 BALANCE",
+        "withdraw": "💸 WITHDRAW",
+        "history": "📜 History",
+        "referral": "👥 REFERRAL",
+        "rules": "📜 RULES",
+        "tutorial": "▶️ TUTORIAL",
+        "support": "📞 SUPPORT",
+        "lang": "🇺🇸 Language: English"
+    }
 }
 
 MESSAGE_NAMES = {
@@ -496,14 +593,27 @@ MESSAGE_NAMES = {
     "maintenance": "🛠 Maintenance Notice"
 }
 
-def get_custom_msg(key):
-    res = db_execute("SELECT value FROM settings WHERE key=%s", (f"msg_{key}",), fetchone=True)
+def get_user_lang(user_id):
+    u = get_user(user_id)
+    if u and u.get("language"):
+        return u["language"]
+    return "bn"
+
+def set_user_lang(user_id, lang):
+    db_execute("UPDATE users SET language=%s WHERE user_id=%s", (lang, user_id))
+
+def get_custom_msg(key, lang='bn'):
+    res = db_execute("SELECT value FROM settings WHERE key=%s", (f"msg_{key}_{lang}",), fetchone=True)
+    if not res:
+        res = db_execute("SELECT value FROM settings WHERE key=%s", (f"msg_{key}",), fetchone=True)
+    
     rate = get_config("email_rate", float)
     d_lim = get_config("daily_file_limit", int)
     e_lim = get_config("max_emails_per_file", int)
     cd = get_config("duplicate_check_days", int)
 
-    text = res["value"] if (res and res["value"]) else DEFAULT_MESSAGES.get(key, "")
+    lang_dict = DEFAULT_MESSAGES.get(lang, DEFAULT_MESSAGES["bn"])
+    text = res["value"] if (res and res["value"]) else lang_dict.get(key, DEFAULT_MESSAGES["bn"].get(key, ""))
     return (
         text.replace("{rate}", f"{rate:.2f}")
         .replace("{daily_limit}", str(d_lim))
@@ -511,18 +621,20 @@ def get_custom_msg(key):
         .replace("{cooldown}", str(cd))
     )
 
-def set_custom_msg(key, text):
-    set_config(f"msg_{key}", text)
+def set_custom_msg(key, text, lang='bn'):
+    set_config(f"msg_{key}_{lang}", text)
 
-def delete_custom_msg(key):
-    db_execute("DELETE FROM settings WHERE key=%s", (f"msg_{key}",))
+def delete_custom_msg(key, lang='bn'):
+    db_execute("DELETE FROM settings WHERE key=%s", (f"msg_{key}_{lang}",))
 
-def get_button_title(btn_key, default_title):
-    res = db_execute("SELECT value FROM settings WHERE key=%s", (f"btn_{btn_key}",), fetchone=True)
-    return res["value"] if res else default_title
+def get_button_title(btn_key, lang='bn'):
+    res = db_execute("SELECT value FROM settings WHERE key=%s", (f"btn_{btn_key}_{lang}",), fetchone=True)
+    if res and res["value"]:
+        return res["value"]
+    return DEFAULT_BUTTON_TITLES.get(lang, DEFAULT_BUTTON_TITLES["bn"]).get(btn_key, DEFAULT_BUTTON_TITLES["bn"].get(btn_key, btn_key))
 
-def set_button_title(btn_key, new_title):
-    set_config(f"btn_{btn_key}", new_title)
+def set_button_title(btn_key, new_title, lang='bn'):
+    set_config(f"btn_{btn_key}_{lang}", new_title)
 
 def clear_junk_cache():
     deleted_files = 0
@@ -549,8 +661,8 @@ def add_user(user, referrer_id=None):
     existing = db_execute("SELECT * FROM users WHERE user_id=%s", (user.id,), fetchone=True)
     if not existing:
         db_execute("""
-            INSERT INTO users (user_id, username, balance, manual_ref_count, files_today, last_file_date, referred_by, ref_bonus_rewarded, seen_rules, created_at)
-            VALUES (%s, %s, 0, 0, 0, %s, %s, 0, 0, %s)
+            INSERT INTO users (user_id, username, balance, manual_ref_count, files_today, last_file_date, referred_by, ref_bonus_rewarded, seen_rules, language, created_at)
+            VALUES (%s, %s, 0, 0, 0, %s, %s, 0, 0, 'bn', %s)
         """, (user.id, user.username or "", datetime.now().strftime("%Y-%m-%d"), referrer_id, datetime.now().isoformat()))
         return True
     else:
@@ -650,7 +762,14 @@ async def is_user_joined_all(bot, user_id):
     except Exception:
         return False
 
-def get_first_time_markup():
+def get_first_time_markup(lang='bn'):
+    if lang == 'en':
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 1. Payment Proof Channel", url=FORCE_CHANNEL_LINK)],
+            [InlineKeyboardButton("👥 2. Official Group", url=FORCE_GROUP_LINK)],
+            [InlineKeyboardButton("✅ 3. Verify", callback_data="check_joined")],
+            [InlineKeyboardButton("💬 Direct Message / Support", url=SUPPORT_URL)]
+        ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 ১. পেমেন্ট প্রুফ চ্যানেল", url=FORCE_CHANNEL_LINK)],
         [InlineKeyboardButton("👥 ২. অফিসিয়াল গ্রুপ", url=FORCE_GROUP_LINK)],
@@ -658,7 +777,13 @@ def get_first_time_markup():
         [InlineKeyboardButton("💬 সরাসরি মেসেজ পাঠান / Support", url=SUPPORT_URL)]
     ])
 
-def get_rejoin_markup():
+def get_rejoin_markup(lang='bn'):
+    if lang == 'en':
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 1. Payment Proof Channel", url=FORCE_CHANNEL_LINK)],
+            [InlineKeyboardButton("👥 2. Official Group", url=FORCE_GROUP_LINK)],
+            [InlineKeyboardButton("✅ 3. Verify", callback_data="check_joined")]
+        ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 ১. পেমেন্ট প্রুফ চ্যানেল", url=FORCE_CHANNEL_LINK)],
         [InlineKeyboardButton("👥 ২. অফিসিয়াল গ্রুপ", url=FORCE_GROUP_LINK)],
@@ -720,43 +845,45 @@ def save_submitted_emails(emails):
 
 
 # =========================================================
-# DYNAMIC BIG KEYBOARD (INCL. ADMIN SHORTCUT)
+# DYNAMIC BIG KEYBOARD (INCL. ADMIN SHORTCUT & LANGUAGE TOGGLE)
 # =========================================================
 
-def get_bottom_keyboard(user_id=None):
+def get_bottom_keyboard(user_id=None, lang='bn'):
     keyboard = []
 
     if is_button_visible("sell"):
-        btn_sell = get_button_title("sell", "📩 SELL FRESH GMAIL ACCOUNT")
+        btn_sell = get_button_title("sell", lang)
         keyboard.append([KeyboardButton(btn_sell)])
 
     row1 = []
     if is_button_visible("balance"):
-        row1.append(KeyboardButton(get_button_title("balance", "💰 BALANCE")))
+        row1.append(KeyboardButton(get_button_title("balance", lang)))
     if is_button_visible("withdraw"):
-        row1.append(KeyboardButton(get_button_title("withdraw", "💸 WITHDRAW")))
+        row1.append(KeyboardButton(get_button_title("withdraw", lang)))
     if row1:
         keyboard.append(row1)
 
     row2 = []
     if is_button_visible("history"):
-        row2.append(KeyboardButton(get_button_title("history", "📜 হিস্ট্রি")))
+        row2.append(KeyboardButton(get_button_title("history", lang)))
     if is_button_visible("referral"):
-        row2.append(KeyboardButton(get_button_title("referral", "👥 REFERRAL")))
+        row2.append(KeyboardButton(get_button_title("referral", lang)))
     if row2:
         keyboard.append(row2)
 
     row3 = []
     if is_button_visible("rules"):
-        row3.append(KeyboardButton(get_button_title("rules", "📜 RULES")))
+        row3.append(KeyboardButton(get_button_title("rules", lang)))
     if is_button_visible("tutorial"):
-        row3.append(KeyboardButton(get_button_title("tutorial", "▶️ TUTORIAL")))
+        row3.append(KeyboardButton(get_button_title("tutorial", lang)))
     if row3:
         keyboard.append(row3)
 
+    row4 = []
     if is_button_visible("support"):
-        btn_sup = get_button_title("support", "📞 SUPPORT")
-        keyboard.append([KeyboardButton(btn_sup)])
+        row4.append(KeyboardButton(get_button_title("support", lang)))
+    row4.append(KeyboardButton(get_button_title("lang", lang)))
+    keyboard.append(row4)
 
     custom_reply_btns = db_execute("SELECT title FROM dynamic_buttons WHERE parent_id=0 AND show_in_reply=1 ORDER BY id ASC", fetchall=True)
     if custom_reply_btns:
@@ -793,8 +920,14 @@ def build_dynamic_sub_markup(parent_id):
 async def show_main_menu(update, context):
     user = update.effective_user
     add_user(user)
+    lang = get_user_lang(user.id)
 
-    msg_text = "🎉 **আপনি আমাদের সাথে সফলভাবে যুক্ত আছেন।**\n\nনিচের বাটনগুলো চেপে আপনার অপশন বেছে নিন:"
+    if lang == 'en':
+        msg_text = "🎉 **You are successfully connected with us.**\n\nChoose your option by pressing the buttons below:"
+        link_title = "📌 **Important Links:**"
+    else:
+        msg_text = "🎉 **আপনি আমাদের সাথে সফলভাবে যুক্ত আছেন।**\n\nনিচের বাটনগুলো চেপে আপনার অপশন বেছে নিন:"
+        link_title = "📌 **গুরুত্বপূর্ণ লিংকসমূহ:**"
 
     url_btns = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=0 AND btn_type='url' ORDER BY id ASC", fetchall=True)
     inline_kb = None
@@ -802,9 +935,9 @@ async def show_main_menu(update, context):
         inline_kb = InlineKeyboardMarkup([[InlineKeyboardButton(b["title"], url=b["content"])] for b in url_btns])
 
     target_msg = update.callback_query.message if update.callback_query else update.message
-    await target_msg.reply_text(msg_text, reply_markup=get_bottom_keyboard(user.id), parse_mode="Markdown")
+    await target_msg.reply_text(msg_text, reply_markup=get_bottom_keyboard(user.id, lang), parse_mode="Markdown")
     if inline_kb:
-        await target_msg.reply_text("📌 **গুরুত্বপূর্ণ লিংকসমূহ:**", reply_markup=inline_kb)
+        await target_msg.reply_text(link_title, reply_markup=inline_kb)
 
 
 # =========================================================
@@ -863,8 +996,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
+        lang = get_user_lang(user.id)
         if is_maintenance_mode() and not is_admin(user.id):
-            clean_m, m_kb = parse_text_and_buttons(get_custom_msg("maintenance"))
+            clean_m, m_kb = parse_text_and_buttons(get_custom_msg("maintenance", lang))
             await update.message.reply_text(clean_m, reply_markup=m_kb, parse_mode="Markdown")
             return
 
@@ -885,23 +1019,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not seen_rules:
             name = user.first_name or "User"
-            welcome_text = get_custom_msg("welcome").replace("{name}", name)
+            welcome_text = get_custom_msg("welcome", lang).replace("{name}", name)
             clean_w, w_kb = parse_text_and_buttons(welcome_text)
 
+            prompt_text = (
+                f"{clean_w}\n\n👇 **বট চালু করতে নিচের চ্যানেল ও গ্রুপে যুক্ত হয়ে ভেরিফাই বাটনে চাপ দিন:**"
+                if lang == 'bn' else
+                f"{clean_w}\n\n👇 **To start the bot, join the channel & group below and click Verify:**"
+            )
+            link_title = "📌 **গুরুত্বপূর্ণ লিংক:**" if lang == 'bn' else "📌 **Important Links:**"
+
             await update.message.reply_text(
-                f"{clean_w}\n\n👇 **বট চালু করতে নিচের চ্যানেল ও গ্রুপে যুক্ত হয়ে ভেরিফাই বাটনে চাপ দিন:**",
-                reply_markup=get_first_time_markup(),
+                prompt_text,
+                reply_markup=get_first_time_markup(lang),
                 parse_mode="Markdown"
             )
             if w_kb:
-                await update.message.reply_text("📌 **গুরুত্বপূর্ণ লিংক:**", reply_markup=w_kb)
+                await update.message.reply_text(link_title, reply_markup=w_kb)
             return
 
         joined = await is_user_joined_all(context.bot, user.id)
         if not joined:
+            rejoin_txt = (
+                "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:"
+                if lang == 'bn' else
+                "⚠️ You are not joined in our channel or group!\n\n👇 Please join and click Verify:"
+            )
             await update.message.reply_text(
-                "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:",
-                reply_markup=get_rejoin_markup()
+                rejoin_txt,
+                reply_markup=get_rejoin_markup(lang)
             )
             return
 
@@ -912,7 +1058,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await update.message.reply_text(
                 "স্বাগতম! নিচের বাটনগুলো চেপে আমাদের চ্যানেল ও গ্রুপে যুক্ত হয়ে ভেরিফাই করুন:",
-                reply_markup=get_rejoin_markup()
+                reply_markup=get_rejoin_markup('bn')
             )
         except Exception:
             pass
@@ -927,7 +1073,8 @@ async def set_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if context.args[0] == ADMIN_SECRET_KEY:
-        await update.message.reply_text(f"👑 আপনার আইডি ({user_id}) ওনার হিসেবে সেট করা আছে। নিচে বড় কিবোর্ডে 🔐 ADMIN PANEL পাবেন।", reply_markup=get_bottom_keyboard(user_id))
+        lang = get_user_lang(user_id)
+        await update.message.reply_text(f"👑 আপনার আইডি ({user_id}) ওনার হিসেবে সেট করা আছে। নিচে বড় কিবোর্ডে 🔐 ADMIN PANEL পাবেন।", reply_markup=get_bottom_keyboard(user_id, lang))
     else:
         await update.message.reply_text("❌ পাসওয়ার্ড ভুল!")
 
@@ -1052,7 +1199,7 @@ async def show_admin_panel(query, user_id):
             InlineKeyboardButton("🧹 ক্লিয়ার ক্যাশ", callback_data="admin_clear_cache")
         ],
         [
-            InlineKeyboardButton("🗑️ সম্পূর্ণ বট ডাটা ক্লিয়ার", callback_data="admin_clear_all_data_prompt"),
+            InlineKeyboardButton("🗑️ সম্পূর্ণ বট ডাটা ক্লিয়ার", callback_data="admin_clear_all_data_prompt"),
             InlineKeyboardButton("👤 নির্দিষ্ট ইউজারের ডাটা মুছুন", callback_data="admin_clear_user_data_prompt")
         ],
         [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")]
@@ -1128,12 +1275,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
+        lang = get_user_lang(user_id)
         if joined:
             mark_rules_seen(user_id)
             await query.message.delete()
             await show_main_menu(update, context)
         else:
-            await query.answer("❌ আপনি এখনো জয়েন করেননি! চ্যানেল ও গ্রুপে জয়েন হয়ে আবার ভেরিফাই চাপুন।", show_alert=True)
+            alert_txt = "❌ আপনি এখনো জয়েন করেননি! চ্যানেল ও গ্রুপে জয়েন হয়ে আবার ভেরিফাই চাপুন।" if lang == 'bn' else "❌ You haven't joined yet! Please join channel & group and click Verify again."
+            await query.answer(alert_txt, show_alert=True)
         return
 
     if data.startswith("dyn_click:"):
@@ -1157,115 +1306,213 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ইউজার হিস্ট্রি মেনু
     if data == "user_hist_live":
+        lang = get_user_lang(user_id)
         subs = db_execute(
             "SELECT * FROM submissions WHERE user_id=%s AND status IN ('pending', 'stage2_review') ORDER BY id DESC", 
             (user_id,), 
             fetchall=True
         )
-        back_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ হিস্ট্রি মেনু", callback_data="user_hist_menu"),
-             InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
-        ])
-        if not subs:
-            await query.edit_message_text("⏳ **বর্তমানে আপনার কোনো ফাইল প্রসেসিং বা পর্যালোচনায় নেই।**\n\nনতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখা যাবে।", reply_markup=back_kb, parse_mode="Markdown")
-            return
+        if lang == 'en':
+            back_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ History Menu", callback_data="user_hist_menu"),
+                 InlineKeyboardButton("❌ Close", callback_data="dismiss_msg")]
+            ])
+            if not subs:
+                await query.edit_message_text("⏳ **You currently have no files processing or under review.**\n\nWhen you submit a new file, its live status will appear here.", reply_markup=back_kb, parse_mode="Markdown")
+                return
 
-        hist_msg = "⏳ **আপনার লাইভ ও চলমান ফাইলগুলোর স্ট্যাটাস:**\n\n"
-        for s in subs:
-            emails = json.loads(s["emails_json"])
-            if s["status"] == "pending":
-                st_text = "🟡 নতুন জমা (অ্যাডমিন পর্যালোচনার অপেক্ষায়)"
-            else:
-                review_count = len(json.loads(s["in_review_json"])) if s["in_review_json"] else 0
-                st_text = f"🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে রয়েছে ({review_count}টি জিমেইল)"
+            hist_msg = "⏳ **Live & Ongoing Files Status:**\n\n"
+            for s in subs:
+                emails = json.loads(s["emails_json"])
+                if s["status"] == "pending":
+                    st_text = "🟡 New Submission (Waiting for admin review)"
+                else:
+                    review_count = len(json.loads(s["in_review_json"])) if s["in_review_json"] else 0
+                    st_text = f"🟠 Under 24-48 hours observation ({review_count} Gmails)"
 
-            hist_msg += (
-                f"📁 **ফাইল ID: #{s['id']}**\n"
-                f"📅 তারিখ: {s['created_at'][:10]}\n"
-                f"✉️ মোট জিমেইল: {len(emails)} টি\n"
-                f"⚡ স্ট্যাটাস: {st_text}\n"
-                f"-----------------------------\n"
-            )
+                hist_msg += (
+                    f"📁 **File ID: #{s['id']}**\n"
+                    f"📅 Date: {s['created_at'][:10]}\n"
+                    f"✉️ Total Gmails: {len(emails)}\n"
+                    f"⚡ Status: {st_text}\n"
+                    f"-----------------------------\n"
+                )
+        else:
+            back_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ হিস্ট্রি মেনু", callback_data="user_hist_menu"),
+                 InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+            ])
+            if not subs:
+                await query.edit_message_text("⏳ **বর্তমানে আপনার কোনো ফাইল প্রসেসিং বা পর্যালোচনায় নেই।**\n\nনতুন ফাইল জমা দিলে তার লাইভ স্ট্যাটাস এখানে দেখা যাবে।", reply_markup=back_kb, parse_mode="Markdown")
+                return
+
+            hist_msg = "⏳ **আপনার লাইভ ও চলমান ফাইলগুলোর স্ট্যাটাস:**\n\n"
+            for s in subs:
+                emails = json.loads(s["emails_json"])
+                if s["status"] == "pending":
+                    st_text = "🟡 নতুন জমা (অ্যাডমিন পর্যালোচনার অপেক্ষায়)"
+                else:
+                    review_count = len(json.loads(s["in_review_json"])) if s["in_review_json"] else 0
+                    st_text = f"🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে রয়েছে ({review_count}টি জিমেইল)"
+
+                hist_msg += (
+                    f"📁 **ফাইল ID: #{s['id']}**\n"
+                    f"📅 তারিখ: {s['created_at'][:10]}\n"
+                    f"✉️ মোট জিমেইল: {len(emails)} টি\n"
+                    f"⚡ স্ট্যাটাস: {st_text}\n"
+                    f"-----------------------------\n"
+                )
         await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
         return
 
     elif data == "user_hist_all":
+        lang = get_user_lang(user_id)
         subs = db_execute("SELECT * FROM submissions WHERE user_id=%s ORDER BY id DESC LIMIT 15", (user_id,), fetchall=True)
-        back_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ হিস্ট্রি মেনু", callback_data="user_hist_menu"),
-             InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
-        ])
-        if not subs:
-            await query.edit_message_text("📜 আপনি এখনও কোনো ফাইল সাবমিট করেননি।", reply_markup=back_kb)
-            return
+        if lang == 'en':
+            back_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ History Menu", callback_data="user_hist_menu"),
+                 InlineKeyboardButton("❌ Close", callback_data="dismiss_msg")]
+            ])
+            if not subs:
+                await query.edit_message_text("📜 You have not submitted any files yet.", reply_markup=back_kb)
+                return
 
-        hist_msg = "📜 **আপনার অতীতের সকল সাবমিশন হিস্ট্রি (সর্বশেষ ১৫টি):**\n\n"
-        for s in subs:
-            emails = json.loads(s["emails_json"])
-            if s["status"] == "pending":
-                st_text = "🟡 নতুন জমা (পর্যালোচনার অপেক্ষায়)"
-            elif s["status"] == "stage2_review":
-                st_text = "🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে"
-            elif s["status"] == "completed":
-                st_text = f"🟢 সম্পন্ন (অনুমোদিত: {s['accepted_count']}টি | বাতিল: {s['rejected_count']}টি)"
-            else:
-                st_text = f"🔴 সম্পূর্ণ বাতিল ({s['rejected_count']}টি নষ্ট)"
+            hist_msg = "📜 **All Past Submission History (Latest 15):**\n\n"
+            for s in subs:
+                emails = json.loads(s["emails_json"])
+                if s["status"] == "pending":
+                    st_text = "🟡 New Submission (Pending review)"
+                elif s["status"] == "stage2_review":
+                    st_text = "🟠 Under 24-48h observation"
+                elif s["status"] == "completed":
+                    st_text = f"🟢 Completed (Accepted: {s['accepted_count']} | Rejected: {s['rejected_count']})"
+                else:
+                    st_text = f"🔴 Fully Rejected ({s['rejected_count']} bad)"
 
-            hist_msg += (
-                f"📁 **ফাইল ID: #{s['id']}** | {s['created_at'][:10]}\n"
-                f"✉️ মোট: {len(emails)}টি | ফলাফল: {st_text}\n"
-                f"-----------------------------\n"
-            )
+                hist_msg += (
+                    f"📁 **File ID: #{s['id']}** | {s['created_at'][:10]}\n"
+                    f"✉️ Total: {len(emails)} | Result: {st_text}\n"
+                    f"-----------------------------\n"
+                )
+        else:
+            back_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ হিস্ট্রি মেনু", callback_data="user_hist_menu"),
+                 InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+            ])
+            if not subs:
+                await query.edit_message_text("📜 আপনি এখনও কোনো ফাইল সাবমিট করেননি।", reply_markup=back_kb)
+                return
+
+            hist_msg = "📜 **আপনার অতীতের সকল সাবমিশন হিস্ট্রি (সর্বশেষ ১৫টি):**\n\n"
+            for s in subs:
+                emails = json.loads(s["emails_json"])
+                if s["status"] == "pending":
+                    st_text = "🟡 নতুন জমা (পর্যালোচনার অপেক্ষায়)"
+                elif s["status"] == "stage2_review":
+                    st_text = "🟠 ২৪-৪৮ ঘণ্টা পর্যবেক্ষণে"
+                elif s["status"] == "completed":
+                    st_text = f"🟢 সম্পন্ন (অনুমোদিত: {s['accepted_count']}টি | বাতিল: {s['rejected_count']}টি)"
+                else:
+                    st_text = f"🔴 সম্পূর্ণ বাতিল ({s['rejected_count']}টি নষ্ট)"
+
+                hist_msg += (
+                    f"📁 **ফাইল ID: #{s['id']}** | {s['created_at'][:10]}\n"
+                    f"✉️ মোট: {len(emails)}টি | ফলাফল: {st_text}\n"
+                    f"-----------------------------\n"
+                )
         await query.edit_message_text(hist_msg, reply_markup=back_kb, parse_mode="Markdown")
         return
 
     elif data == "user_hist_withdrawals":
+        lang = get_user_lang(user_id)
         wds = db_execute("SELECT * FROM withdrawals WHERE user_id=%s ORDER BY id DESC LIMIT 20", (user_id,), fetchall=True)
-        back_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ হিস্ট্রি মেনু", callback_data="user_hist_menu"),
-             InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
-        ])
-        
-        if not wds:
-            await query.edit_message_text("💸 **আপনার কোনো উইথড্রয়াল হিস্ট্রি পাওয়া যায়নি।**", reply_markup=back_kb, parse_mode="Markdown")
-            return
+        if lang == 'en':
+            back_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ History Menu", callback_data="user_hist_menu"),
+                 InlineKeyboardButton("❌ Close", callback_data="dismiss_msg")]
+            ])
+            if not wds:
+                await query.edit_message_text("💸 **No withdrawal history found.**", reply_markup=back_kb, parse_mode="Markdown")
+                return
 
-        u_rate = get_config("usdt_rate", float)
-        wd_msg = "💸 **আপনার উইথড্রয়াল হিস্ট্রি (লাইভ ও অতীত):**\n\n"
-        
-        for w in wds:
-            status_map = {
-                "pending": "🟡 পেন্ডিং (প্রসেসিং চলছে)",
-                "approved": "🟢 সফল / পেইড (Approved)",
-                "rejected": "🔴 বাতিল (Rejected)"
-            }
-            st_text = status_map.get(w["status"], w["status"])
-            rec_bdt = float(w["receive_amount"])
-            rec_usdt = rec_bdt / u_rate if u_rate > 0 else 0
+            u_rate = get_config("usdt_rate", float)
+            wd_msg = "💸 **Your Withdrawal History (Live & Past):**\n\n"
+            for w in wds:
+                status_map = {
+                    "pending": "🟡 Pending (Processing)",
+                    "approved": "🟢 Success / Paid (Approved)",
+                    "rejected": "🔴 Rejected"
+                }
+                st_text = status_map.get(w["status"], w["status"])
+                rec_bdt = float(w["receive_amount"])
+                rec_usdt = rec_bdt / u_rate if u_rate > 0 else 0
 
-            wd_msg += (
-                f"🆔 **উইথড্র ID: #{w['id']}**\n"
-                f"📅 তারিখ: {w['created_at'][:10]}\n"
-                f"💳 মেথড: **{w['method']}** (`{w['account']}`)\n"
-                f"💰 উত্তোলিত: ৳{float(w['amount']):.2f} (ফি: ৳{float(w['fee']):.2f})\n"
-                f"💵 পেমেন্ট পরিমাণ: ৳{rec_bdt:.2f} BDT"
-            )
-            if w["method"] == "Binance":
-                wd_msg += f" (${rec_usdt:.2f} USDT)"
-            wd_msg += f"\n⚡ বর্তমান অবস্থা: **{st_text}**\n-----------------------------\n"
+                wd_msg += (
+                    f"🆔 **Withdraw ID: #{w['id']}**\n"
+                    f"📅 Date: {w['created_at'][:10]}\n"
+                    f"💳 Method: **{w['method']}** (`{w['account']}`)\n"
+                    f"💰 Amount: ৳{float(w['amount']):.2f} (Fee: ৳{float(w['fee']):.2f})\n"
+                    f"💵 Payout: ৳{rec_bdt:.2f} BDT"
+                )
+                if w["method"] == "Binance":
+                    wd_msg += f" (${rec_usdt:.2f} USDT)"
+                wd_msg += f"\n⚡ Status: **{st_text}**\n-----------------------------\n"
+        else:
+            back_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ হিস্ট্রি মেনু", callback_data="user_hist_menu"),
+                 InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+            ])
+            if not wds:
+                await query.edit_message_text("💸 **আপনার কোনো উইথড্রয়াল হিস্ট্রি পাওয়া যায়নি।**", reply_markup=back_kb, parse_mode="Markdown")
+                return
+
+            u_rate = get_config("usdt_rate", float)
+            wd_msg = "💸 **আপনার উইথড্রয়াল হিস্ট্রি (লাইভ ও অতীত):**\n\n"
+            for w in wds:
+                status_map = {
+                    "pending": "🟡 পেন্ডিং (প্রসেসিং চলছে)",
+                    "approved": "🟢 সফল / পেইড (Approved)",
+                    "rejected": "🔴 বাতিল (Rejected)"
+                }
+                st_text = status_map.get(w["status"], w["status"])
+                rec_bdt = float(w["receive_amount"])
+                rec_usdt = rec_bdt / u_rate if u_rate > 0 else 0
+
+                wd_msg += (
+                    f"🆔 **উইথড্র ID: #{w['id']}**\n"
+                    f"📅 তারিখ: {w['created_at'][:10]}\n"
+                    f"💳 মেথড: **{w['method']}** (`{w['account']}`)\n"
+                    f"💰 উত্তোলিত: ৳{float(w['amount']):.2f} (ফি: ৳{float(w['fee']):.2f})\n"
+                    f"💵 পেমেন্ট পরিমাণ: ৳{rec_bdt:.2f} BDT"
+                )
+                if w["method"] == "Binance":
+                    wd_msg += f" (${rec_usdt:.2f} USDT)"
+                wd_msg += f"\n⚡ বর্তমান অবস্থা: **{st_text}**\n-----------------------------\n"
 
         await query.edit_message_text(wd_msg, reply_markup=back_kb, parse_mode="Markdown")
         return
 
     elif data == "user_hist_menu":
-        hist_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
-            [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")],
-            [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")],
-            [InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
-        ])
+        lang = get_user_lang(user_id)
+        if lang == 'en':
+            hist_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏳ Live Ongoing Submissions (Review)", callback_data="user_hist_live")],
+                [InlineKeyboardButton("📜 All Past Submission History", callback_data="user_hist_all")],
+                [InlineKeyboardButton("💸 Withdrawal History (Live & Past)", callback_data="user_hist_withdrawals")],
+                [InlineKeyboardButton("❌ Close", callback_data="dismiss_msg")]
+            ])
+            prompt_text = "📜 **Select your history category:**"
+        else:
+            hist_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
+                [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")],
+                [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")],
+                [InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+            ])
+            prompt_text = "📜 **আপনার হিস্ট্রি ক্যাটাগরি নির্বাচন করুন:**"
+
         await query.edit_message_text(
-            "📜 **আপনার হিস্ট্রি ক্যাটাগরি নির্বাচন করুন:**",
+            prompt_text,
             reply_markup=hist_kb,
             parse_mode="Markdown"
         )
@@ -1288,15 +1535,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(msg, show_alert=True)
         await show_admin_panel(query, user_id)
 
-    # নতুন অ্যাডমিন ফিচার: সম্পূর্ণ বট ডাটা ক্লিয়ার বা নির্দিষ্ট ইউজারের ডাটা মোছা
     elif data == "admin_clear_all_data_prompt":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("⚠️ হ্যাঁ, সব ডাটা চিরতরে মুছুন", callback_data="admin_clear_all_data_confirm")],
             [InlineKeyboardButton("❌ বাতিল", callback_data="admin_panel")]
         ])
         await query.edit_message_text(
-            "⚠️ **সতর্কতা: সম্পূর্ণ বট ডাটাবেজ ক্লিয়ার করা!**\n\n"
-            "আপনি কি নিশ্চিত যে আপনি সকল ইউজার, সাবমিশন ফাইল, উইথড্র রিকোয়েস্ট এবং হিস্ট্রি চিরতরে মুছে ফেলতে চান? এটি আর ফিরিয়ে আনা যাবে না!",
+            "⚠️ **সতর্কতা: সম্পূর্ণ বট ডাটাবেজ ক্লিয়ার করা!**\n\n"
+            "আপনি কি নিশ্চিত যে আপনি সকল ইউজার, সাবমিশন ফাইল, উইথড্র রিকোয়েস্ট এবং হিস্ট্রি চিরতরে মুছে ফেলতে চান? এটি আর ফিরিয়ে আনা যাবে না!",
             reply_markup=kb,
             parse_mode="Markdown"
         )
@@ -1309,7 +1555,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_execute("DELETE FROM submitted_emails")
         db_execute("DELETE FROM helpers")
         init_db()
-        await query.answer("বটের সকল ডাটা সফলভাবে সম্পূর্ণ ক্লিয়ার করা হয়েছে!", show_alert=True)
+        await query.answer("বটের সকল ডাটা সফলভাবে সম্পূর্ণ ক্লিয়ার করা হয়েছে!", show_alert=True)
         await show_admin_panel(query, user_id)
 
     elif data == "admin_clear_user_data_prompt":
@@ -1321,7 +1567,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    # পেন্ডিং উইথড্র তালিকা ও প্রসেসিং
     elif data == "admin_pending_withdraws":
         wds = db_execute("SELECT * FROM withdrawals WHERE status='pending' ORDER BY id ASC", fetchall=True)
         if not wds:
@@ -1382,7 +1627,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    # বাটনভিত্তিক ব্যালেন্স ম্যানেজমেন্ট
     elif data == "adm_balance_menu":
         kb = [
             [InlineKeyboardButton("➕ ব্যালেন্স যোগ করুন", callback_data="bal_op:add")],
@@ -1392,7 +1636,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text(
             "💰 **ব্যালেন্স ম্যানেজমেন্ট প্যানেল:**\n\n"
-            "টাইপ করে কমান্ড দেওয়ার প্রয়োজন নেই। নিচের বাটন চাপুন:",
+            "টাইপ করে কমান্ড দেওয়ার প্রয়োজন নেই। নিচের বাটন চাপুন:",
             reply_markup=InlineKeyboardMarkup(kb),
             parse_mode="Markdown"
         )
@@ -1408,7 +1652,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    # বাটন সুইচ ও নোটিশ
     elif data == "admin_switches_menu":
         buttons = [
             ("sell", "📩 Sell Gmail"),
@@ -1459,7 +1702,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    # কিবোর্ড ভিজিবিলিটি
     elif data == "admin_default_btns_menu":
         btn_items = [
             ("sell", "📩 Sell Gmail"),
@@ -1482,7 +1724,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb.append([InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")])
         await query.edit_message_text(
             "✏️ **কিবোর্ড বাটন প্রদর্শন ও নাম এডিট:**\n\n"
-            "• যেকোনো বাটনে চাপ দিয়ে বড় কিবোর্ড থেকে তা **হাইড/রিমুভ** করতে পারেন বা আবার ফিরিয়ে আনতে পারেন।\n"
+            "• যেকোনো বাটনে চাপ দিয়ে বড় কিবোর্ড থেকে তা **হাইড/রিমুভ** করতে পারেন বা আবার ফিরিয়ে আনতে পারেন。\n"
             "• '✏️ নাম এডিট' চেপে বাটনের নাম পরিবর্তন করতে পারেন:",
             reply_markup=InlineKeyboardMarkup(kb),
             parse_mode="Markdown"
@@ -1491,7 +1733,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("toggle_vis:"):
         b_key = data.split(":")[1]
         now_vis = toggle_button_visibility(b_key)
-        state_label = "কিবোর্ডে যুক্ত করা হয়েছে" if now_vis else "কিবোর্ড থেকে রিমুভ/হাইড করা হয়েছে"
+        state_label = "কিবোর্ডে যুক্ত করা হয়েছে" if now_vis else "কিবোর্ড থেকে রিমুভ/হাইড করা হয়েছে"
         await query.answer(f"বাটনটি {state_label}!", show_alert=True)
         query.data = "admin_default_btns_menu"
         await button_handler(update, context)
@@ -1500,9 +1742,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         btn_key = data.split(":")[1]
         context.user_data["editing_btn_key"] = btn_key
         context.user_data["state"] = "waiting_new_button_title"
-        await query.edit_message_text(f"✍️ **'{btn_key.upper()}'** বাটনটির নতুন নাম লিখে চ্যাটে পাঠিয়ে দিন:\n(বাতিল করতে /cancel পাঠান)")
+        await query.edit_message_text(f"✍️ **'{btn_key.upper()}'** বাটনটির নতুন নাম লিখে চ্যাটে পাঠিয়ে দিন:\n(বাতিল করতে /cancel পাঠান)")
 
-    # ইনবক্স ফাইল আপলোড উইজার্ড
     elif data == "adm_wizard_inbox_start":
         context.user_data["state"] = "wizard_waiting_uid"
         await query.edit_message_text(
@@ -2317,6 +2558,154 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def finalize_stage1(context, query, sub_id, in_review_list, rejected_list, admin_user_id):
+    db_execute(
+        "UPDATE submissions SET status='stage2_review', in_review_json=%s WHERE id=%s",
+        (json.dumps(in_review_list), sub_id)
+    )
+    sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
+    admin_name = get_admin_name(admin_user_id)
+
+    await safe_send_message(
+        context.bot,
+        chat_id=sub["user_id"],
+        text=(
+            f"🔍 **আপনার সাবমিশনের প্রাথমিক বাছাই সম্পন্ন হয়েছে (#{sub_id})!**\n\n"
+            f"✅ পর্যালোচনার জন্য গৃহীত: {len(in_review_list)} টি জিমেইল\n"
+            f"⏳ এই জিমেইলগুলো এখন ২৪ থেকে ৪৮ ঘণ্টা অ্যাডমিনের পর্যবেক্ষণে থাকবে।"
+            f"{f' (বাতিল: {len(rejected_list)} টি)' if rejected_list else ''}"
+        )
+    )
+
+    if rejected_list:
+        bio = create_rejected_excel(rejected_items=rejected_list)
+        bio.name = f"rejected_stage1_sub_{sub_id}.xlsx"
+        await context.bot.send_document(
+            chat_id=sub["user_id"],
+            document=bio,
+            caption=f"📁 **সাবমিশন #{sub_id}: প্রথম ধাপে বাতিল হওয়া জিমেইলের তালিকা ও কারণসমূহ।**"
+        )
+
+    await notify_all_admins(
+        context,
+        f"✅ **ধাপ ১ সম্পন্ন (#Submission_{sub_id})**\n\n"
+        f"👤 সম্পন্ন করেছেন: **{admin_name}**\n"
+        f"🆔 ইউজার: `{sub['user_id']}`\n"
+        f"✉️ পর্যালোচনায় আছে: {len(in_review_list)}টি | বাতিল: {len(rejected_list)}টি"
+    )
+
+    try:
+        if hasattr(query, "edit_message_caption"):
+            await query.edit_message_caption(caption=f"✅ সাবমিশন #{sub_id} - ধাপ ১ সফলভাবে সম্পন্ন হয়েছে!", reply_markup=None)
+        elif hasattr(query, "edit_text"):
+            await query.edit_text(text=f"✅ সাবমিশন #{sub_id} - ধাপ ১ সফলভাবে সম্পন্ন হয়েছে!")
+    except Exception:
+        pass
+
+
+async def finalize_stage3(context, query, sub_id, accepted_list, rejected_list, admin_user_id):
+    rate = get_config("email_rate", float)
+    total_reward = len(accepted_list) * rate
+
+    sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
+    db_execute(
+        "UPDATE submissions SET status='completed', accepted_count=%s, rejected_count=%s WHERE id=%s",
+        (len(accepted_list), len(rejected_list), sub_id)
+    )
+
+    if total_reward > 0:
+        update_balance(sub["user_id"], total_reward)
+
+        ref_user = get_user(sub["user_id"])
+        if ref_user and ref_user.get("referred_by") and ref_user.get("ref_bonus_rewarded") == 0:
+            referrer_id = ref_user["referred_by"]
+            ref_bonus = get_config("referral_bonus", float)
+            update_balance(referrer_id, ref_bonus)
+            db_execute("UPDATE users SET ref_bonus_rewarded=1 WHERE user_id=%s", (sub["user_id"],))
+            await safe_send_message(
+                context.bot,
+                chat_id=referrer_id,
+                text=f"🎉 **অভিনন্দন!** আপনার রেফার করা ইউজার (`{sub['user_id']}`) তার প্রথম জিমেইল ফাইল সফলভাবে সম্পন্ন করায় আপনি ৳{ref_bonus:.2f} BDT রেফারেল বোনাস পেয়েছেন!"
+            )
+
+    admin_name = get_admin_name(admin_user_id)
+
+    await safe_send_message(
+        context.bot,
+        chat_id=sub["user_id"],
+        text=(
+            f"🎉 **আপনার সাবমিশন সম্পূর্ণ অনুমোদিত হয়েছে (#{sub_id})!**\n\n"
+            f"✅ চূড়ান্ত অনুমোদিত: {len(accepted_list)} টি জিমেইল\n"
+            f"💰 আপনার অ্যাকাউন্টে যোগ হয়েছে: **৳{total_reward:.2f} BDT**"
+            f"{f' (নষ্ট বাতিল: {len(rejected_list)} টি)' if rejected_list else ''}"
+        )
+    )
+
+    if rejected_list:
+        bio = create_rejected_excel(rejected_items=rejected_list)
+        bio.name = f"rejected_stage3_sub_{sub_id}.xlsx"
+        await context.bot.send_document(
+            chat_id=sub["user_id"],
+            document=bio,
+            caption=f"📁 **সাবমিশন #{sub_id}: চূড়ান্ত ধাপে নষ্ট বা বাতিল হওয়া জিমেইলের তালিকা ও কারণসমূহ।**"
+        )
+
+    await notify_all_admins(
+        context,
+        f"💰 **ধাপ ৩ (সম্পন্ন) (#Submission_{sub_id})**\n\n"
+        f"👤 অনুমোদন করেছেন: **{admin_name}**\n"
+        f"🆔 ইউজার: `{sub['user_id']}`\n"
+        f"✅ অনুমোদিত: {len(accepted_list)}টি (৳{total_reward:.2f}) | বাতিল: {len(rejected_list)}টি"
+    )
+
+    try:
+        if hasattr(query, "edit_message_caption"):
+            await query.edit_message_caption(caption=f"💰 সাবমিশন #{sub_id} - চূড়ান্ত অনুমোদন ও পেমেন্ট সম্পন্ন!", reply_markup=None)
+        elif hasattr(query, "edit_text"):
+            await query.edit_text(text=f"💰 সাবমিশন #{sub_id} - চূড়ান্ত অনুমোদন ও পেমেন্ট সম্পন্ন!")
+    except Exception:
+        pass
+
+
+async def finalize_reject_all(context, query, sub_id, rejected_items, admin_user_id):
+    sub = db_execute("SELECT * FROM submissions WHERE id=%s", (sub_id,), fetchone=True)
+    db_execute(
+        "UPDATE submissions SET status='rejected', rejected_count=%s WHERE id=%s",
+        (len(rejected_items), sub_id)
+    )
+    admin_name = get_admin_name(admin_user_id)
+
+    await safe_send_message(
+        context.bot,
+        chat_id=sub["user_id"],
+        text=f"❌ **দুঃখিত! আপনার সাবমিশন ফাইলটি (#{sub_id}) সম্পূর্ণ বাতিল করা হয়েছে।**"
+    )
+
+    bio = create_rejected_excel(rejected_items=rejected_items)
+    bio.name = f"fully_rejected_sub_{sub_id}.xlsx"
+    await context.bot.send_document(
+        chat_id=sub["user_id"],
+        document=bio,
+        caption=f"📁 **সাবমিশন #{sub_id}: সম্পূর্ণ বাতিল হওয়া ফাইলের কারণসহ তালিকা।**"
+    )
+
+    await notify_all_admins(
+        context,
+        f"❌ **ফাইল সম্পূর্ণ বাতিল (#Submission_{sub_id})**\n\n"
+        f"👤 বাতিল করেছেন: **{admin_name}**\n"
+        f"🆔 ইউজার: `{sub['user_id']}`\n"
+        f"🚫 মোট বাতিল: {len(rejected_items)}টি জিমেইল"
+    )
+
+    try:
+        if hasattr(query, "edit_message_caption"):
+            await query.edit_message_caption(caption=f"❌ সাবমিশন #{sub_id} - সম্পূর্ণ ফাইল বাতিল করা হয়েছে।", reply_markup=None)
+        elif hasattr(query, "edit_text"):
+            await query.edit_text(text=f"❌ সাবমিশন #{sub_id} - সম্পূর্ণ ফাইল বাতিল করা হয়েছে।")
+    except Exception:
+        pass
+
+
 # =========================================================
 # MESSAGE HANDLER
 # =========================================================
@@ -2329,8 +2718,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
 
+    lang = get_user_lang(user.id)
+
     if is_maintenance_mode() and not is_admin(user.id):
-        clean_m, m_kb = parse_text_and_buttons(get_custom_msg("maintenance"))
+        clean_m, m_kb = parse_text_and_buttons(get_custom_msg("maintenance", lang))
         await safe_send_message(context.bot, chat_id=user.id, text=clean_m, reply_markup=m_kb)
         return
 
@@ -2339,22 +2730,37 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     rate = get_config("email_rate", float)
 
+    # ভাষা পরিবর্তন হ্যান্ডলার (Language Toggle)
+    btn_lang_bn = DEFAULT_BUTTON_TITLES["bn"]["lang"]
+    btn_lang_en = DEFAULT_BUTTON_TITLES["en"]["lang"]
+    if text in [btn_lang_bn, btn_lang_en] or "ভাষা:" in text or "Language:" in text:
+        new_lang = 'en' if lang == 'bn' else 'bn'
+        set_user_lang(user.id, new_lang)
+        success_txt = (
+            "✅ ভাষা সফলভাবে ইংরেজিতে পরিবর্তন করা হয়েছে!"
+            if new_lang == 'en' else
+            "✅ ভাষা সফলভাবে বাংলায় পরিবর্তন করা হয়েছে!"
+        )
+        await update.message.reply_text(success_txt, reply_markup=get_bottom_keyboard(user.id, new_lang))
+        return
+
     if text == "🔐 ADMIN PANEL" and is_admin(user.id):
         await admin(update, context)
         return
 
-    btn_sell = get_button_title("sell", "📩 SELL FRESH GMAIL ACCOUNT")
-    btn_bal = get_button_title("balance", "💰 BALANCE")
-    btn_wd = get_button_title("withdraw", "💸 WITHDRAW")
-    btn_hist = get_button_title("history", "📜 হিস্ট্রি")
-    btn_ref = get_button_title("referral", "👥 REFERRAL")
-    btn_rules = get_button_title("rules", "📜 RULES")
-    btn_tut = get_button_title("tutorial", "▶️ TUTORIAL")
-    btn_sup = get_button_title("support", "📞 SUPPORT")
+    btn_sell = get_button_title("sell", lang)
+    btn_bal = get_button_title("balance", lang)
+    btn_wd = get_button_title("withdraw", lang)
+    btn_hist = get_button_title("history", lang)
+    btn_ref = get_button_title("referral", lang)
+    btn_rules = get_button_title("rules", lang)
+    btn_tut = get_button_title("tutorial", lang)
+    btn_sup = get_button_title("support", lang)
 
     if text == "/cancel":
         context.user_data.clear()
-        await update.message.reply_text("বাতিল করা হয়েছে।", reply_markup=get_bottom_keyboard(user.id))
+        cancel_txt = "Cancelled." if lang == 'en' else "বাতিল করা হয়েছে।"
+        await update.message.reply_text(cancel_txt, reply_markup=get_bottom_keyboard(user.id, lang))
         return
 
     # নির্দিষ্ট ইউজারের ডাটা ডিলিট করার প্রম্পট হ্যান্ডলার
@@ -2461,9 +2867,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for b_title, b_key in button_switch_pairs:
             if text == b_title or (b_key == "sell" and "SELL FRESH GMAIL ACCOUNT" in text) or (b_key == "tutorial" and "TUTORIAL" in text.upper()):
                 if not is_button_active(b_key):
-                    notice = get_button_closed_notice(b_key)
+                    notice = get_button_closed_notice(b_key, lang)
                     clean_n, n_kb = parse_text_and_buttons(notice)
-                    dismiss_btn = InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")
+                    dismiss_btn = InlineKeyboardButton("❌ বন্ধ করুন" if lang == 'bn' else "❌ Close", callback_data="dismiss_msg")
                     if n_kb:
                         inline_rows = [list(r) for r in n_kb.inline_keyboard]
                         inline_rows.append([dismiss_btn])
@@ -2676,7 +3082,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (parent_id, title, b_type, text)
         )
         context.user_data.clear()
-        await update.message.reply_text(f"🎉 **বাটন সফলভাবে তৈরি হয়েছে!**\n\nনাম: {title}\nধরন: {b_type.upper()}", reply_markup=get_bottom_keyboard(user.id))
+        await update.message.reply_text(f"🎉 **বাটন সফলভাবে তৈরি হয়েছে!**\n\nনাম: {title}\nধরন: {b_type.upper()}", reply_markup=get_bottom_keyboard(user.id, lang))
         return
 
     dyn_btn_row = db_execute("SELECT * FROM dynamic_buttons WHERE parent_id=0 AND title=%s", (text,), fetchone=True)
@@ -2723,21 +3129,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if is_button_visible("support") and text == btn_sup:
-        sup_text = get_custom_msg("support")
+        sup_text = get_custom_msg("support", lang)
         clean_sup, sup_kb = parse_text_and_buttons(sup_text)
         def_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("💬 সরাসরি মেসেজ পাঠান / Support", url=SUPPORT_URL)],
-            [InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+            [InlineKeyboardButton("❌ বন্ধ করুন" if lang == 'bn' else "❌ Close", callback_data="dismiss_msg")]
         ])
         await safe_send_message(context.bot, chat_id=user.id, text=clean_sup, reply_markup=(sup_kb or def_kb))
         return
 
     if is_button_visible("tutorial") and (text == btn_tut or "TUTORIAL" in text.upper()):
-        tut_text = get_custom_msg("tutorial")
+        tut_text = get_custom_msg("tutorial", lang)
         clean_tut, tut_kb = parse_text_and_buttons(tut_text)
         def_tut_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📺 Watch Video Tutorial", url="https://youtube.com")],
-            [InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+            [InlineKeyboardButton("❌ বন্ধ করুন" if lang == 'bn' else "❌ Close", callback_data="dismiss_msg")]
         ])
         await safe_send_message(context.bot, chat_id=user.id, text=clean_tut, reply_markup=(tut_kb or def_tut_kb))
         return
@@ -2745,9 +3151,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(user.id):
         joined = await is_user_joined_all(context.bot, user.id)
         if not joined:
+            rejoin_txt = (
+                "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:"
+                if lang == 'bn' else
+                "⚠️ You are not joined in our channel or group!\n\n👇 Please join and click Verify:"
+            )
             await update.message.reply_text(
-                "⚠️ আপনি আমাদের চ্যানেল বা গ্রুপে যুক্ত নেই!\n\n👇 দয়া করে জয়েন হয়ে ভেরিফাই বাটনে চাপ দিন:",
-                reply_markup=get_rejoin_markup()
+                rejoin_txt,
+                reply_markup=get_rejoin_markup(lang)
             )
             return
 
@@ -2763,7 +3174,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(user.id) and state == "waiting_new_msg_text":
         key = context.user_data.get("editing_msg_key")
         if text:
-            set_custom_msg(key, text)
+            set_custom_msg(key, text, lang)
             clean_m, kb_m = parse_text_and_buttons(text)
             context.user_data.clear()
             await update.message.reply_text(f"✅ সফল হয়েছে! '{MESSAGE_NAMES.get(key)}' মেসেজটি সেভ হয়েছে। প্রিভিউ নিচে দেখুন:")
@@ -2773,23 +3184,41 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(user.id) and state == "waiting_new_button_title":
         btn_key = context.user_data.get("editing_btn_key")
         if text:
-            set_button_title(btn_key, text)
+            set_button_title(btn_key, text, lang)
             context.user_data.clear()
-            await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}", reply_markup=get_bottom_keyboard(user.id))
+            await update.message.reply_text(f"✅ বাটন নাম আপডেট হয়েছে:\n{text}", reply_markup=get_bottom_keyboard(user.id, lang))
         return
 
     if is_button_visible("history") and text == btn_hist:
-        hist_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
-            [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")],
-            [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")],
-            [InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
-        ])
+        if lang == 'en':
+            hist_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏳ Live Ongoing Submissions (Review)", callback_data="user_hist_live")],
+                [InlineKeyboardButton("📜 All Past Submission History", callback_data="user_hist_all")],
+                [InlineKeyboardButton("💸 Withdrawal History (Live & Past)", callback_data="user_hist_withdrawals")],
+                [InlineKeyboardButton("❌ Close", callback_data="dismiss_msg")]
+            ])
+            prompt_text = (
+                "📜 **Select your history category:**\n\n"
+                "🔹 **Live Ongoing Submissions:** Files currently under review or 24-48h observation.\n"
+                "🔹 **All Submission History:** Details of all your previous submissions.\n"
+                "🔹 **Withdrawal History:** Live info of all pending and successful withdrawals."
+            )
+        else:
+            hist_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏳ লাইভ চলমান সাবমিশন (Review)", callback_data="user_hist_live")],
+                [InlineKeyboardButton("📜 অতীতের সকল সাবমিশন হিস্ট্রি", callback_data="user_hist_all")],
+                [InlineKeyboardButton("💸 উইথড্র হিস্ট্রি (লাইভ ও অতীত)", callback_data="user_hist_withdrawals")],
+                [InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]
+            ])
+            prompt_text = (
+                "📜 **আপনার হিস্ট্রি ক্যাটাগরি নির্বাচন করুন:**\n\n"
+                "🔹 **লাইভ চলমান সাবমিশন:** বর্তমানে রিভিউ বা ২৪-৪৮ ঘণ্টা পর্যালোচনায় থাকা ফাইল।\n"
+                "🔹 **সকল সাবমিশন হিস্ট্রি:** আপনার জমা দেওয়া পূর্বের সকল ফাইলের বিস্তারিত।\n"
+                "🔹 **উইথড্র হিস্ট্রি:** আপনার পেন্ডিং ও সফল হওয়া সকল উইথড্রর লাইভ তথ্য।"
+            )
+
         await update.message.reply_text(
-            "📜 **আপনার হিস্ট্রি ক্যাটাগরি নির্বাচন করুন:**\n\n"
-            "🔹 **লাইভ চলমান সাবমিশন:** বর্তমানে রিভিউ বা ২৪-৪৮ ঘণ্টা পর্যালোচনায় থাকা ফাইল।\n"
-            "🔹 **সকল সাবমিশন হিস্ট্রি:** আপনার জমা দেওয়া পূর্বের সকল ফাইলের বিস্তারিত।\n"
-            "🔹 **উইথড্র হিস্ট্রি:** আপনার পেন্ডিং ও সফল হওয়া সকল উইথড্রর লাইভ তথ্য।",
+            prompt_text,
             reply_markup=hist_kb,
             parse_mode="Markdown"
         )
@@ -2800,22 +3229,31 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         d_lim = get_config("daily_file_limit", int)
         e_lim = get_config("max_emails_per_file", int)
         if count >= d_lim:
-            await update.message.reply_text(f"❌ দৈনিক লিমিট শেষ ({d_lim}/{d_lim})।")
+            limit_msg = f"❌ Daily limit reached ({d_lim}/{d_lim})." if lang == 'en' else f"❌ দৈনিক লিমিট শেষ ({d_lim}/{d_lim})।"
+            await update.message.reply_text(limit_msg)
             return
 
         context.user_data["state"] = "waiting_file"
-        sell_msg = get_custom_msg("sell")
+        sell_msg = get_custom_msg("sell", lang)
         clean_s, s_kb = parse_text_and_buttons(sell_msg)
-        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বাতিল করুন", callback_data="dismiss_msg")]])
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বাতিল করুন" if lang == 'bn' else "❌ Cancel", callback_data="dismiss_msg")]])
+        
+        info_text = (
+            f"{clean_s}\n\n"
+            f"📊 Today's Submissions: {count}/{d_lim}\n"
+            f"💰 Rate per valid Gmail: ৳{rate:.2f} BDT\n"
+            f"⚠️ Max {e_lim} Gmails allowed per file."
+            if lang == 'en' else
+            f"{clean_s}\n\n"
+            f"📊 আজকের সাবমিশন: {count}/{d_lim}\n"
+            f"💰 প্রতি ভ্যালিড জিমেইল রেট: ৳{rate:.2f} BDT\n"
+            f"⚠️ ফাইলে সর্বোচ্চ {e_lim}টি জিমেইল থাকতে পারবে।"
+        )
+
         await safe_send_message(
             context.bot,
             chat_id=user.id,
-            text=(
-                f"{clean_s}\n\n"
-                f"📊 আজকের সাবমিশন: {count}/{d_lim}\n"
-                f"💰 প্রতি ভ্যালিড জিমেইল রেট: ৳{rate:.2f} BDT\n"
-                f"⚠️ ফাইলে সর্বোচ্চ {e_lim}টি জিমেইল থাকতে পারবে।"
-            ),
+            text=info_text,
             reply_markup=(s_kb or cancel_kb)
         )
         return
@@ -2825,7 +3263,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u_rate = get_config("usdt_rate", float)
         b_usdt = b_bdt / u_rate if u_rate > 0 else 0
         refs = get_referral_count(user.id)
-        bal_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
+        bal_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন" if lang == 'bn' else "❌ Close", callback_data="dismiss_msg")]])
         await update.message.reply_text(
             f"💰 **YOUR ACCOUNT BALANCE**\n\n"
             f"🔹 BDT Balance: ৳{b_bdt:.2f} BDT\n"
@@ -2843,19 +3281,32 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         w_fee = get_config("withdraw_fee_percent", float)
         bal_usdt = bal / u_rate if u_rate > 0 else 0
         if bal < min_w:
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
-            await update.message.reply_text(f"❌ সর্বনিম্ন উইথড্র ৳{min_w:.2f} BDT। আপনার আছে: ৳{bal:.2f} BDT", reply_markup=kb)
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন" if lang == 'bn' else "❌ Close", callback_data="dismiss_msg")]])
+            low_msg = f"❌ Minimum withdrawal is ৳{min_w:.2f} BDT. You have: ৳{bal:.2f} BDT" if lang == 'en' else f"❌ সর্বনিম্ন উইথড্র ৳{min_w:.2f} BDT। আপনার আছে: ৳{bal:.2f} BDT"
+            await update.message.reply_text(low_msg, reply_markup=kb)
             return
 
         context.user_data["state"] = "withdraw_amount"
-        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
-        await update.message.reply_text(
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন" if lang == 'bn' else "❌ Close", callback_data="dismiss_msg")]])
+        
+        wd_prompt = (
+            f"💸 **WITHDRAWAL SYSTEM**\n\n"
+            f"💰 Balance: ৳{bal:.2f} BDT (${bal_usdt:.2f} USDT)\n"
+            f"🔹 Minimum Withdraw: ৳{min_w:.2f} BDT\n"
+            f"🔹 Fee: {w_fee:.1f}%\n"
+            f"🔹 Dollar Rate: $1 = ৳{u_rate:.2f}\n\n"
+            f"How much do you want to withdraw? Send in numbers:\n(Send /cancel to abort)"
+            if lang == 'en' else
             f"💸 **WITHDRAWAL SYSTEM**\n\n"
             f"💰 ব্যালেন্স: ৳{bal:.2f} BDT (${bal_usdt:.2f} USDT)\n"
             f"🔹 সর্বনিম্ন উইথড্র: ৳{min_w:.2f} BDT\n"
             f"🔹 ফি: {w_fee:.1f}%\n"
             f"🔹 ডলার রেট: $1 = ৳{u_rate:.2f}\n\n"
-            f"কত টাকা উইথড্র করতে চান? সংখ্যায় লিখে পাঠান:\n(বাতিল করতে /cancel পাঠান)",
+            f"কত টাকা উইথড্র করতে চান? সংখ্যায় লিখে পাঠান:\n(বাতিল করতে /cancel পাঠান)"
+        )
+
+        await update.message.reply_text(
+            wd_prompt,
             reply_markup=cancel_kb,
             parse_mode="Markdown"
         )
@@ -2868,25 +3319,30 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ref_bonus = get_config("referral_bonus", float)
         earned = refs * ref_bonus
 
-        ref_template = get_custom_msg("referral")
+        ref_template = get_custom_msg("referral", lang)
         custom_ref = ref_template.replace("{link}", ref_link).replace("{bonus}", str(ref_bonus))
         clean_r, r_kb = parse_text_and_buttons(custom_ref)
 
         msg = (
             f"{clean_r}\n\n"
+            f"📊 Your Referral Stats:\n"
+            f"🔹 Verified Successful Referrals: {refs}\n"
+            f"🔹 Total Earnings: ৳{earned:.2f} BDT"
+            if lang == 'en' else
+            f"{clean_r}\n\n"
             f"📊 আপনার রেফারেল পরিসংখ্যান:\n"
             f"🔹 ভেরিফায়েড সফল রেফার: {refs} জন\n"
             f"🔹 মোট অর্জিত আয়: ৳{earned:.2f} BDT"
         )
-        def_r_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
+        def_r_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন" if lang == 'bn' else "❌ Close", callback_data="dismiss_msg")]])
         await safe_send_message(context.bot, chat_id=user.id, text=msg, reply_markup=(r_kb or def_r_kb))
         return
 
     elif is_button_visible("rules") and text == btn_rules:
         name = user.first_name or "User"
-        rules = get_custom_msg("rules").replace("{name}", name)
+        rules = get_custom_msg("rules", lang).replace("{name}", name)
         clean_rul, rul_kb = parse_text_and_buttons(rules)
-        def_rul_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
+        def_rul_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন" if lang == 'bn' else "❌ Close", callback_data="dismiss_msg")]])
         await safe_send_message(context.bot, chat_id=user.id, text=clean_rul, reply_markup=(rul_kb or def_rul_kb))
         return
 
@@ -2906,7 +3362,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if res:
             await update.message.reply_text("✅ মেসেজ পাঠানো হয়েছে।")
         else:
-            await update.message.reply_text("❌ মেসেজ পাঠানো সম্ভব হয়নি (ইউজার ব্লক করে থাকতে পারে)।")
+            await update.message.reply_text("❌ মেসেজ পাঠানো সম্ভব হয়নি (ইউজার ব্লক করে থাকতে পারে)।")
         context.user_data.clear()
         return
 
@@ -2914,7 +3370,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             amount = float(text)
         except ValueError:
-            await update.message.reply_text("❌ সঠিক সংখ্যা লিখুন।")
+            err_num = "❌ Please enter a valid number." if lang == 'en' else "❌ সঠিক সংখ্যা লিখুন।"
+            await update.message.reply_text(err_num)
             return
 
         min_w = get_config("min_withdraw", float)
@@ -2922,11 +3379,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u_rate = get_config("usdt_rate", float)
 
         if amount < min_w:
-            await update.message.reply_text(f"❌ সর্বনিম্ন উইথড্র ৳{min_w:.2f} BDT।")
+            low_w = f"❌ Minimum withdrawal is ৳{min_w:.2f} BDT." if lang == 'en' else f"❌ সর্বনিম্ন উইথড্র ৳{min_w:.2f} BDT।"
+            await update.message.reply_text(low_w)
             return
 
         if amount > get_balance(user.id):
-            await update.message.reply_text("❌ ব্যালেন্স পর্যাপ্ত নেই।")
+            no_bal = "❌ Insufficient balance." if lang == 'en' else "❌ ব্যালেন্স পর্যাপ্ত নেই।"
+            await update.message.reply_text(no_bal)
             return
 
         fee = amount * w_fee / 100
@@ -2940,10 +3399,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("💳 bKash", callback_data="method_bkash")],
             [InlineKeyboardButton("💳 Nagad", callback_data="method_nagad")],
             [InlineKeyboardButton("💰 Binance (UID)", callback_data="method_binance")],
-            [InlineKeyboardButton("❌ বাতিল করুন", callback_data="dismiss_msg")]
+            [InlineKeyboardButton("❌ বাতিল করুন" if lang == 'bn' else "❌ Cancel", callback_data="dismiss_msg")]
         ]
+        summary_text = (
+            f"💸 Withdrawal Summary:\nWithdraw: ৳{amount:.2f} BDT\nFee: ৳{fee:.2f} BDT\nYou will get: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\nSelect method:"
+            if lang == 'en' else
+            f"💸 উইথড্র সামারি:\nউত্তোলন: ৳{amount:.2f} BDT\nফি: ৳{fee:.2f} BDT\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\nমেথড নির্বাচন করুন:"
+        )
         await update.message.reply_text(
-            f"💸 উইথড্র সামারি:\nউত্তোলন: ৳{amount:.2f} BDT\nফি: ৳{fee:.2f} BDT\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\nমেথড নির্বাচন করুন:",
+            summary_text,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
@@ -2952,10 +3416,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         method = context.user_data.get("withdraw_method")
 
         if method in ["Bkash", "Nagad"] and not BD_PHONE_REGEX.match(text):
-            await update.message.reply_text(f"❌ ভুল {method} নম্বর! ১১ ডিজিটের বাংলাদেশি নম্বর দিন।")
+            err_phone = f"❌ Invalid {method} number! Provide 11-digit Bangladeshi number." if lang == 'en' else f"❌ ভুল {method} নম্বর! ১১ ডিজিটের বাংলাদেশি নম্বর দিন।"
+            await update.message.reply_text(err_phone)
             return
         elif method == "Binance" and not BINANCE_UID_REGEX.match(text):
-            await update.message.reply_text("❌ ভুল Binance UID! শুধুমাত্র ৭-১০ ডিজিটের সংখ্যা দিন।")
+            err_uid = "❌ Invalid Binance UID! Enter 7-10 digit numbers only." if lang == 'en' else "❌ ভুল Binance UID! শুধুমাত্র ৭-১০ ডিজিটের সংখ্যা দিন।"
+            await update.message.reply_text(err_uid)
             return
 
         amt = context.user_data["withdraw_amount"]
@@ -2973,9 +3439,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         w_id = last_w["id"] if last_w else 1
         context.user_data.clear()
 
-        confirm_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন", callback_data="dismiss_msg")]])
+        confirm_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ বন্ধ করুন" if lang == 'bn' else "❌ Close", callback_data="dismiss_msg")]])
+        success_wd = (
+            f"✅ Withdrawal request successful!\nMethod: {method}\nAccount: `{text}`\nYou will get: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\n⚡ You can check status in '📜 History' > '💸 Withdrawal History'."
+            if lang == 'en' else
+            f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: `{text}`\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\n⚡ আপনার উইথড্র স্ট্যাটাস '📜 হিস্ট্রি' > '💸 উইথড্র হিস্ট্রি'-তে দেখতে পাবেন।"
+        )
         await update.message.reply_text(
-            f"✅ উইথড্র রিকোয়েস্ট সফল হয়েছে!\nমেথড: {method}\nঅ্যাকাউন্ট: `{text}`\nপাবেন: ৳{rec:.2f} BDT (${rec_usdt:.2f} USDT)\n\n⚡ আপনার উইথড্র স্ট্যাটাস '📜 হিস্ট্রি' > '💸 উইথড্র হিস্ট্রি'-তে দেখতে পাবেন।",
+            success_wd,
             reply_markup=confirm_kb,
             parse_mode="Markdown"
         )
@@ -2999,7 +3470,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"💸 পেমেন্ট দিতে হবে: ৳{rec:.2f} (${rec_usdt:.2f})\n"
                     f"💳 মেথড: **{method}**\n"
                     f"📌 অ্যাকাউন্ট/নম্বর: `{text}`\n\n"
-                    f"💡 নম্বরের ওপর আঙুল ছোঁয়ালেই (ট্যাপ করলেই) কপি হয়ে যাবে। টাকা পাঠিয়ে অ্যাপ্রুভ বাটনে চাপ দিন।"
+                    f"💡 নম্বরের ওপর আঙুল ছোঁয়ালেই (ট্যাপ করলেই) কপি হয়ে যাবে। টাকা পাঠিয়ে অ্যাপ্রুভ বাটনে চাপ দিন।"
                 ),
                 reply_markup=keyboard
             )
@@ -3009,12 +3480,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state == "waiting_file":
         doc = update.message.document
         if not doc:
-            await update.message.reply_text("❌ এক্সেল বা সিএসভি ফাইল (.xlsx, .csv) পাঠান।")
+            err_doc = "❌ Please send an Excel or CSV file (.xlsx, .csv)." if lang == 'en' else "❌ এক্সেল বা সিএসভি ফাইল (.xlsx, .csv) পাঠান।"
+            await update.message.reply_text(err_doc)
             return
 
         fn = doc.file_name.lower()
         if not (fn.endswith(".xlsx") or fn.endswith(".xls") or fn.endswith(".csv")):
-            await update.message.reply_text("❌ শুধুমাত্র Excel বা CSV ফাইল সাপোর্টেড।")
+            err_ext = "❌ Only Excel or CSV files are supported." if lang == 'en' else "❌ শুধুমাত্র Excel বা CSV ফাইল সাপোর্টেড।"
+            await update.message.reply_text(err_ext)
             return
 
         os.makedirs("downloads", exist_ok=True)
@@ -3027,33 +3500,38 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             if os.path.exists(local_path):
                 os.remove(local_path)
-            await update.message.reply_text(f"❌ ফাইল পড়তে সমস্যা হয়েছে: {e}")
+            err_read = f"❌ Error reading file: {e}" if lang == 'en' else f"❌ ফাইল পড়তে সমস্যা হয়েছে: {e}"
+            await update.message.reply_text(err_read)
             return
 
         if os.path.exists(local_path):
             os.remove(local_path)
 
         if not valid_emails:
-            await update.message.reply_text("❌ ফাইলে কোনো ভ্যালিড @gmail.com পাওয়া যায়নি!")
+            err_no = "❌ No valid @gmail.com found in the file!" if lang == 'en' else "❌ ফাইলে কোনো ভ্যালিড @gmail.com পাওয়া যায়নি!"
+            await update.message.reply_text(err_no)
             return
 
         m_lim = get_config("max_emails_per_file", int)
         if len(valid_emails) > m_lim:
-            await update.message.reply_text(
-                f"❌ ফাইলে {len(valid_emails)}টি জিমেইল রয়েছে。\n"
-                f"একটি ফাইলে সর্বোচ্চ {m_lim}টি জিমেইল দেওয়া অনুমোদিত।"
+            err_lim = (
+                f"❌ File has {len(valid_emails)} Gmails.\nMax allowed per file is {m_lim}."
+                if lang == 'en' else
+                f"❌ ফাইলে {len(valid_emails)}টি জিমেইল রয়েছে。\nএকটি ফাইলে সর্বোচ্চ {m_lim}টি জিমেইল দেওয়া অনুমোদিত।"
             )
+            await update.message.reply_text(err_lim)
             return
 
         duplicates = check_recent_duplicate_emails(valid_emails)
         if duplicates:
             cd_days = get_config("duplicate_check_days", int)
             dup_list = "\n".join([f"• {d}" for d in duplicates])
-            await update.message.reply_text(
-                f"❌ **ফাইল গ্রহণ করা হয়নি!**\n\n"
-                f"নিচের জিমেইলগুলো বিগত {cd_days} দিনের মধ্যে জমা দেওয়া হয়েছিল:\n{dup_list}\n\n"
-                f"⚠️ একবার জমা দেওয়া জিমেইল {cd_days} দিন অতিবাহিত না হওয়া পর্যন্ত আর সাবমিট করা যাবে না।"
+            err_dup = (
+                f"❌ **File not accepted!**\n\nThe following Gmails were submitted within the last {cd_days} days:\n{dup_list}"
+                if lang == 'en' else
+                f"❌ **ফাইল গ্রহণ করা হয়নি!**\n\nনিচের জিমেইলগুলো বিগত {cd_days} দিনের মধ্যে জমা দেওয়া হয়েছিল:\n{dup_list}"
             )
+            await update.message.reply_text(err_dup)
             return
 
         save_submitted_emails(valid_emails)
@@ -3069,16 +3547,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         increase_file_count(user.id)
         context.user_data.clear()
 
-        await update.message.reply_text(
-            f"✅ ফাইল সফলভাবে জমা হয়েছে!\n\n"
-            f"🔍 মোট ভ্যালিড Gmail: {len(valid_emails)} টি。\n"
-            f"⏳ অ্যাডমিন প্রাথমিক বাছাইয়ের পর জিমেইলগুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণ করবেন।"
+        success_sub = (
+            f"✅ File submitted successfully!\n\n🔍 Total valid Gmails: {len(valid_emails)}.\n⏳ Admin will observe Gmails for 24-48 hours after initial screening."
+            if lang == 'en' else
+            f"✅ ফাইল সফলভাবে জমা হয়েছে!\n\n🔍 মোট ভ্যালিড Gmail: {len(valid_emails)} টি。\n⏳ অ্যাডমিন প্রাথমিক বাছাইয়ের পর জিমেইলগুলো ২৪ থেকে ৪৮ ঘণ্টা পর্যবেক্ষণ করবেন।"
         )
+        await update.message.reply_text(success_sub)
 
         await dispatch_submission_to_admins(context, sub_id, user.id, user.username, doc.file_id, valid_emails)
         return
 
-    await update.message.reply_text("নিচের বাটনগুলো ব্যবহার করুন:", reply_markup=get_bottom_keyboard(user.id))
+    await update.message.reply_text("নিচের বাটনগুলো ব্যবহার করুন:", reply_markup=get_bottom_keyboard(user.id, lang))
 
 
 async def withdrawal_method_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3161,7 +3640,6 @@ def main():
         webhook_target = f"{clean_url}/{BOT_TOKEN}"
         print(f"Starting Superfast Webhook on port {PORT}: {webhook_target}")
         
-        # হেলথ চেক রাউট যুক্ত করার জন্য কাস্টম ওয়েব রুট হ্যান্ডলার
         async def health_check(request):
             return aiohttp.web.Response(text="Bot is running smoothly!", status=200)
 
