@@ -559,7 +559,7 @@ DEFAULT_MESSAGES = {
     }
 }
 
- DEFAULT_BUTTON_TITLES = {
+DEFAULT_BUTTON_TITLES = {
     "bn": {
         "sell": "📩 জিমেইল সেল করুন",
         "balance": "💰 ব্যালেন্স",
