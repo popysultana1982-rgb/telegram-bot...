@@ -1270,33 +1270,87 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
-    if data == "dismiss_msg":
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
+   if data == "admin_change_lang":
+        lang_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🇧🇩 বাংলা (Bangla)", callback_data="adm_set_lang:bn")],
+            [InlineKeyboardButton("🇺🇸 English", callback_data="adm_set_lang:en")],
+            [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin_panel")]
+        ])
+        await query.edit_message_text("🌐 **ভাষা নির্বাচন করুন / Select Language:**", reply_markup=lang_kb, parse_mode="Markdown")
         return
 
-    if data.startswith("set_lang:"):
-        new_lang = data.split(":")[1]
-        set_user_lang(user_id, new_lang)
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
+    if data.startswith("adm_set_lang:"):
+        new_l = data.split(":")[1]
+        set_user_lang(user_id, new_l)
+        await query.answer("Language updated!" if new_l == "en" else "ভাষা পরিবর্তন করা হয়েছে!", show_alert=True)
+        await show_admin_panel(query, user_id)
+        return
 
-        if new_lang == "en":
-            success_msg = "✅ Language successfully changed to English!"
-        else:
-            success_msg = "✅ ভাষা সফলভাবে বাংলায় পরিবর্তন করা হয়েছে!"
+    if data.startswith("bc_send:"):
+        mode = data.split(":")[1]
+        raw_text = context.user_data.get("broadcast_raw_text", "")
+        if not raw_text:
+            await query.answer("মেসেজ পাওয়া যায়নি!", show_alert=True)
+            return
 
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=success_msg,
-            reply_markup=get_bottom_keyboard(user_id, new_lang)
+        clean_bc, bc_kb = parse_text_and_buttons(raw_text)
+        await query.edit_message_text("⏳ ব্রডকাস্ট পাঠানো শুরু হয়েছে, অনুগ্রহ করে অপেক্ষা করুন...")
+
+        users = db_execute("SELECT user_id, language FROM users", fetchall=True)
+        user_count = 0
+
+        translations = {}
+        if mode == "auto":
+            translations["en"] = await translate_text(clean_bc, "en")
+            translations["bn"] = clean_bc
+
+        if users:
+            for u in users:
+                u_lang = u.get("language") or "bn"
+                send_text = (translations.get("en") if u_lang == "en" else clean_bc) if mode == "auto" else clean_bc
+                res = await safe_send_message(context.bot, chat_id=u["user_id"], text=send_text, reply_markup=bc_kb)
+                if res:
+                    user_count += 1
+
+        group_res = await safe_send_message(context.bot, chat_id=FORCE_GROUP_CHAT_ID, text=clean_bc, reply_markup=bc_kb)
+        group_posted = group_res is not None
+        context.user_data.pop("broadcast_raw_text", None)
+
+        mode_label = "🌐 অটো-ট্রান্সলেট সহ" if mode == "auto" else "📝 সরাসরি হুবহু"
+        st_group = "✅ সফল" if group_posted else "❌ ব্যর্থ"
+        report_msg = (
+            f"📢 **ব্রডকাস্ট সম্পন্ন হয়েছে!**\n\n"
+            f"⚙️ মোড: **{mode_label}**\n"
+            f"👤 ইউজার ইনবক্সে পৌঁছেছে: {user_count}/{len(users) if users else 0} জনের কাছে\n"
+            f"👥 গ্রুপে পোস্ট: {st_group}\n"
         )
+        await query.edit_message_text(report_msg, parse_mode="Markdown")
         return
 
+    if data.startswith("single_send:"):
+        mode = data.split(":")[1]
+        t_id = context.user_data.get("target_user")
+        raw_text = context.user_data.get("single_raw_text", "")
+        if not t_id or not raw_text:
+            await query.answer("মেসেজ পাওয়া যায়নি!", show_alert=True)
+            return
+
+        clean_s_msg, s_markup = parse_text_and_buttons(raw_text)
+        target_u = get_user(t_id)
+        t_lang = target_u.get("language", "bn") if (target_u and target_u.get("language")) else "bn"
+
+        send_text = await translate_text(clean_s_msg, t_lang) if mode == "auto" else clean_s_msg
+
+        res = await safe_send_message(context.bot, chat_id=t_id, text=send_text, reply_markup=s_markup)
+        context.user_data.pop("target_user", None)
+        context.user_data.pop("single_raw_text", None)
+
+        mode_txt = "ট্রান্সলেট করে" if mode == "auto" else "সরাসরি"
+        if res:
+            await query.edit_message_text(f"✅ মেসেজটি {mode_txt} ইউজারের কাছে সফলভাবে পৌঁছেছে!")
+        else:
+            await query.edit_message_text("❌ মেসেজ পাঠানো সম্ভব হয়নি (ইউজার বট ব্লক করে থাকতে পারে)।")
+        return
     if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         lang = get_user_lang(user_id)
