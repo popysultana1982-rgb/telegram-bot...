@@ -1270,7 +1270,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
-   if data == "admin_change_lang":
+    if data == "dismiss_msg":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        return
+
+    if data.startswith("set_lang:"):
+        new_lang = data.split(":")[1]
+        set_user_lang(user_id, new_lang)
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        if new_lang == "en":
+            success_msg = "✅ Language successfully changed to English!"
+        else:
+            success_msg = "✅ ভাষা সফলভাবে বাংলায় পরিবর্তন করা হয়েছে!"
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=success_msg,
+            reply_markup=get_bottom_keyboard(user_id, new_lang)
+        )
+        return
+
+    if data == "admin_change_lang":
         lang_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🇧🇩 বাংলা (Bangla)", callback_data="adm_set_lang:bn")],
             [InlineKeyboardButton("🇺🇸 English", callback_data="adm_set_lang:en")],
@@ -1351,7 +1378,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_text("❌ মেসেজ পাঠানো সম্ভব হয়নি (ইউজার বট ব্লক করে থাকতে পারে)।")
         return
-    if data == "check_joined":
+         if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         lang = get_user_lang(user_id)
         if joined:
@@ -1362,7 +1389,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             alert_txt = "❌ আপনি এখনো জয়েন করেননি! চ্যানেল ও গ্রুপে জয়েন হয়ে আবার ভেরিফাই চাপুন।" if lang == 'bn' else "❌ You haven't joined yet! Please join channel & group and click Verify again."
             await query.answer(alert_txt, show_alert=True)
         return
-
     if data.startswith("dyn_click:"):
         btn_id = int(data.split(":")[1])
         btn = db_execute("SELECT * FROM dynamic_buttons WHERE id=%s", (btn_id,), fetchone=True)
