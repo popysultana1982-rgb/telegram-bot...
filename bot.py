@@ -1203,7 +1203,10 @@ async def show_admin_panel(query, user_id):
             InlineKeyboardButton("🗑️ সম্পূর্ণ বট ডাটা ক্লিয়ার", callback_data="admin_clear_all_data_prompt"),
             InlineKeyboardButton("👤 নির্দিষ্ট ইউজারের ডাটা মুছুন", callback_data="admin_clear_user_data_prompt")
         ],
-        [InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")]
+        [
+            InlineKeyboardButton("📊 Statistics", callback_data="admin_stats"),
+            InlineKeyboardButton("🌐 ভাষা পরিবর্তন / Language", callback_data="admin_change_lang")
+        ]
     ]
 
     if is_owner:
