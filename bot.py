@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import threading
 from datetime import datetime, timedelta
 
@@ -3748,14 +3749,11 @@ async def refinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
+# =========================================================
 # MAIN (WEBHOOK MODE WITH HEALTH CHECK ENDPOINT)
 # =========================================================
 
-def main():
-    init_db()
-
-    application = Application.builder().token(BOT_TOKEN).concurrent_updates(True).build()
-
+def setup_handlers(application: Application):
     application.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
     application.add_handler(CommandHandler("admin", admin, filters=filters.ChatType.PRIVATE))
     application.add_handler(CommandHandler("setadmin", set_admin_cmd, filters=filters.ChatType.PRIVATE))
@@ -3769,20 +3767,88 @@ def main():
     
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, message_handler))
 
-    if RENDER_EXTERNAL_URL:
-        clean_url = RENDER_EXTERNAL_URL.rstrip("/")
-        webhook_target = f"{clean_url}/{BOT_TOKEN}"
-        print(f"Starting Superfast Webhook on port {PORT}: {webhook_target}")
 
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=BOT_TOKEN,
-            webhook_url=webhook_target,
+async def run_webhook_server():
+    init_db()
+
+    clean_url = RENDER_EXTERNAL_URL.rstrip("/")
+    webhook_target = f"{clean_url}/{BOT_TOKEN}"
+
+    # Build PTB Application with updater=None so aiohttp handles webhook traffic
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .concurrent_updates(True)
+        .updater(None)
+        .build()
+    )
+
+    setup_handlers(application)
+
+    async def health_handler(request: web.Request) -> web.Response:
+        return web.Response(text="Bot is healthy and running!", status=200, content_type="text/plain")
+
+    async def webhook_handler(request: web.Request) -> web.Response:
+        try:
+            data = await request.json()
+            update = Update.de_json(data=data, bot=application.bot)
+            await application.update_queue.put(update)
+            return web.Response(text="OK", status=200)
+        except Exception as e:
+            print(f"Error handling Telegram webhook update: {e}")
+            return web.Response(text="Error", status=500)
+
+    web_app = web.Application()
+    # Route for UptimeRobot, Chrome, and general Health Check
+    web_app.router.add_get("/", health_handler)
+    web_app.router.add_get("/health", health_handler)
+    web_app.router.add_get(f"/{BOT_TOKEN}", health_handler)
+    # Route for Telegram webhook incoming updates
+    web_app.router.add_post(f"/{BOT_TOKEN}", webhook_handler)
+
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+
+    print(f"🚀 Webhook & Health server listening on 0.0.0.0:{PORT}")
+    print(f"📡 Webhook URL: {webhook_target}")
+    print(f"🟢 Health Check URL: {clean_url}/")
+
+    async with application:
+        await application.bot.set_webhook(
+            url=webhook_target,
             allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=False,
         )
+        await application.start()
+
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop_event.set)
+            except (NotImplementedError, RuntimeError):
+                pass
+        
+        try:
+            await stop_event.wait()
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        finally:
+            print("Shutting down application...")
+            await application.stop()
+            await runner.cleanup()
+
+
+def main():
+    if RENDER_EXTERNAL_URL:
+        asyncio.run(run_webhook_server())
     else:
+        init_db()
         print("Starting Long Polling fallback...")
+        application = Application.builder().token(BOT_TOKEN).concurrent_updates(True).build()
+        setup_handlers(application)
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
