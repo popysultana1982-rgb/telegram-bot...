@@ -330,6 +330,23 @@ async def safe_send_message(bot, chat_id, text, reply_markup=None):
             print(f"Failed to send message to {chat_id}: {e}")
             return None
 
+async def translate_text(text: str, target_lang: str = "en") -> str:
+    if not text or not text.strip():
+        return text
+    try:
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {"client": "gtx", "sl": "auto", "tl": target_lang, "dt": "t", "q": text}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data and isinstance(data, list) and len(data) > 0 and data[0]:
+                        translated = "".join([part[0] for part in data[0] if part and part[0]])
+                        return translated if translated else text
+    except Exception as e:
+        print(f"Translation error: {e}")
+    return text
+
 def get_user_chat_url(target_user_id, username=None):
     if username:
         clean_user = username.replace("@", "").strip()
@@ -1378,7 +1395,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_text("❌ মেসেজ পাঠানো সম্ভব হয়নি (ইউজার বট ব্লক করে থাকতে পারে)।")
         return
-         if data == "check_joined":
+
+    if data == "check_joined":
         joined = await is_user_joined_all(context.bot, user_id)
         lang = get_user_lang(user_id)
         if joined:
@@ -1389,6 +1407,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             alert_txt = "❌ আপনি এখনো জয়েন করেননি! চ্যানেল ও গ্রুপে জয়েন হয়ে আবার ভেরিফাই চাপুন।" if lang == 'bn' else "❌ You haven't joined yet! Please join channel & group and click Verify again."
             await query.answer(alert_txt, show_alert=True)
         return
+
     if data.startswith("dyn_click:"):
         btn_id = int(data.split(":")[1])
         btn = db_execute("SELECT * FROM dynamic_buttons WHERE id=%s", (btn_id,), fetchone=True)
@@ -2837,7 +2856,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ভাষা পরিবর্তন মেনু (Language Selection Menu)
     btn_lang_bn = DEFAULT_BUTTON_TITLES["bn"]["lang"]
     btn_lang_en = DEFAULT_BUTTON_TITLES["en"]["lang"]
-    if text in [btn_lang_bn, btn_lang_en] or "Change Language" in text or "ভাষা" in text or "Language" in text:
+    if text in [btn_lang_bn, btn_lang_en] or "Change Language" in text or "CHANGE LANGUAGE" in text or "ভাষা" in text or "Language" in text:
         lang_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🇧🇩 বাংলা (Bangla)", callback_data="set_lang:bn")],
             [InlineKeyboardButton("🇺🇸 English", callback_data="set_lang:en")]
@@ -3207,29 +3226,25 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_send_message(context.bot, chat_id=user.id, text=f"📂 **{dyn_btn_row['title']}** এর সাব-মেনু:", reply_markup=sub_markup)
         return
 
-    # সেফ ব্রডকাস্ট ইঞ্জিন
+    # সেফ ব্রডকাস্ট ইঞ্জিন (উইথ অটো-ট্রান্সলেট কন্ট্রোল)
     if is_admin(user.id) and state == "admin_broadcast":
+        context.user_data["broadcast_raw_text"] = text
         clean_bc, bc_kb = parse_text_and_buttons(text)
-        users = db_execute("SELECT user_id FROM users", fetchall=True)
-        user_count = 0
-        if users:
-            for u in users:
-                res = await safe_send_message(context.bot, chat_id=u["user_id"], text=clean_bc, reply_markup=bc_kb)
-                if res:
-                    user_count += 1
+        preview = clean_bc[:250] + ("..." if len(clean_bc) > 250 else "")
 
-        group_res = await safe_send_message(context.bot, chat_id=FORCE_GROUP_CHAT_ID, text=clean_bc, reply_markup=bc_kb)
-        group_posted = group_res is not None
-
-        context.user_data.clear()
-        
-        report_msg = (
-            f"📢 **ব্রডকাস্ট সম্পন্ন হয়েছে!**\n\n"
-            f"👤 ইউজার ইনবক্সে পৌঁছেছে: {user_count}/{len(users) if users else 0} জনের কাছে\n"
-            f"👥 অফিসিয়াল গ্রুপে পোস্ট: {'✅ সফল' if group_posted else '❌ ব্যর্থ (বটকে গ্রুপে অ্যাড করে অ্যাডমিন দিন)'}\n"
-            f"📢 পেমেন্ট প্রুফ চ্যানেল: 🚫 বাদ রাখা হয়েছে"
+        prompt_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌐 অটো-ট্রান্সলেট সহ পাঠান (ইউজারের ভাষা অনুযায়ী)", callback_data="bc_send:auto")],
+            [InlineKeyboardButton("📝 সরাসরি হুবহু পাঠান (যেভাবে আছে)", callback_data="bc_send:direct")],
+            [InlineKeyboardButton("❌ বাতিল করুন", callback_data="admin_panel")]
+        ])
+        context.user_data["state"] = None
+        await update.message.reply_text(
+            f"📢 **ব্রডকাস্ট মেসেজ কনফার্মেশন**\n\n"
+            f"📝 **মেসেজ প্রিভিউ:**\n`{preview}`\n\n"
+            f"👉 আপনি কীভাবে পাঠাতে চান নির্বাচন করুন:",
+            reply_markup=prompt_kb,
+            parse_mode="Markdown"
         )
-        await update.message.reply_text(report_msg, parse_mode="Markdown")
         return
 
     if is_button_visible("support") and text == btn_sup:
@@ -3461,13 +3476,28 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_admin(user.id) and state == "admin_single_text":
         t_id = context.user_data.get("target_user")
+        context.user_data["single_raw_text"] = text
+        target_u = get_user(t_id)
+        t_lang = target_u.get("language", "bn") if (target_u and target_u.get("language")) else "bn"
+        lang_label = "🇺🇸 English" if t_lang == "en" else "🇧🇩 বাংলা"
+
         clean_s_msg, s_markup = parse_text_and_buttons(text)
-        res = await safe_send_message(context.bot, chat_id=t_id, text=clean_s_msg, reply_markup=s_markup)
-        if res:
-            await update.message.reply_text("✅ মেসেজ পাঠানো হয়েছে।")
-        else:
-            await update.message.reply_text("❌ মেসেজ পাঠানো সম্ভব হয়নি (ইউজার ব্লক করে থাকতে পারে)।")
-        context.user_data.clear()
+        preview = clean_s_msg[:250] + ("..." if len(clean_s_msg) > 250 else "")
+
+        prompt_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"🌐 ইউজারের ভাষায় ({lang_label}) ট্রান্সলেট করে পাঠান", callback_data="single_send:auto")],
+            [InlineKeyboardButton("📝 সরাসরি হুবহু পাঠান", callback_data="single_send:direct")],
+            [InlineKeyboardButton("❌ বাতিল করুন", callback_data="admin_panel")]
+        ])
+        context.user_data["state"] = None
+        await update.message.reply_text(
+            f"✉️ **সিঙ্গেল মেসেজ কনফার্মেশন**\n\n"
+            f"👤 প্রাপক ইউজার: `{t_id}` (ভাষা: **{lang_label}**)\n"
+            f"📝 **মেসেজ প্রিভিউ:**\n`{preview}`\n\n"
+            f"👉 কীভাবে পাঠাতে চান নির্বাচন করুন:",
+            reply_markup=prompt_kb,
+            parse_mode="Markdown"
+        )
         return
 
     if state == "withdraw_amount":
